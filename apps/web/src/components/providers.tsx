@@ -1,0 +1,158 @@
+"use client";
+// The app's settings and the connected wallet, shared by the pages that need them.
+//
+// The wallet is an injected EIP-1193 provider (QIE Wallet, MetaMask). Nothing connects by itself: the person presses Connect and
+// approves it in the wallet. The app holds an account address and a chain id, and never a key.
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
+import { JsonRpcProvider, Network } from "ethers";
+import type { AppConfig } from "../lib/config";
+import { classifyWalletError, connectWallet, describeWalletError, findInjectedWallet, hexToNumber, networkState, readChainId, switchChain } from "../lib/eip1193";
+import type { Eip1193Provider, NetworkState } from "../lib/eip1193";
+import { openReader } from "../lib/reads";
+import type { ChainReader } from "../lib/reads";
+
+// ------------------------------------------------------------------------------------------------ settings
+
+const ConfigContext = createContext<AppConfig | null>(null);
+
+export function ConfigProvider({ config, children }: { config: AppConfig; children: ReactNode }) {
+  return <ConfigContext.Provider value={config}>{children}</ConfigContext.Provider>;
+}
+
+export function useConfig(): AppConfig {
+  const config = useContext(ConfigContext);
+  if (!config) throw new Error("useConfig needs a ConfigProvider");
+  return config;
+}
+
+// --------------------------------------------------------------------------------------------------- wallet
+
+export type WalletStatus = "unavailable" | "idle" | "connecting" | "connected";
+
+export type WalletApi = {
+  status: WalletStatus;
+  provider: Eip1193Provider | null;
+  account: string | null;
+  chainId: number | null;
+  network: NetworkState;
+  error: string | null;
+  connect(): Promise<void>;
+  switchNetwork(): Promise<void>;
+};
+
+const WalletContext = createContext<WalletApi | null>(null);
+
+export function WalletProvider({ children }: { children: ReactNode }) {
+  const config = useConfig();
+  const [provider, setProvider] = useState<Eip1193Provider | null>(null);
+  const [status, setStatus] = useState<WalletStatus>("idle");
+  const [account, setAccount] = useState<string | null>(null);
+  const [chainId, setChainId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const found = findInjectedWallet(window as unknown as { ethereum?: unknown });
+    if (!found) {
+      setStatus("unavailable");
+      return;
+    }
+    setProvider(found);
+    const onAccounts = (accounts: unknown) => {
+      const first = Array.isArray(accounts) ? accounts[0] : undefined;
+      if (typeof first === "string") setAccount(first);
+      else {
+        setAccount(null);
+        setStatus("idle");
+      }
+    };
+    const onChain = (value: unknown) => {
+      try {
+        setChainId(hexToNumber(value));
+      } catch {
+        setChainId(null);
+      }
+    };
+    found.on?.("accountsChanged", onAccounts as never);
+    found.on?.("chainChanged", onChain as never);
+    return () => {
+      found.removeListener?.("accountsChanged", onAccounts as never);
+      found.removeListener?.("chainChanged", onChain as never);
+    };
+  }, []);
+
+  const connect = useCallback(async () => {
+    if (!provider) return;
+    setError(null);
+    setStatus("connecting");
+    try {
+      const { account: a, chainId: c } = await connectWallet(provider);
+      setAccount(a);
+      setChainId(c);
+      setStatus("connected");
+    } catch (err) {
+      setStatus("idle");
+      setError(describeWalletError(err));
+    }
+  }, [provider]);
+
+  const switchNetwork = useCallback(async () => {
+    if (!provider) return;
+    setError(null);
+    try {
+      await switchChain(provider, config.network);
+      setChainId(await readChainId(provider));
+    } catch (err) {
+      setError(describeWalletError(err));
+      if (classifyWalletError(err) !== "rejected") setChainId(await readChainId(provider).catch(() => null));
+    }
+  }, [provider, config.network]);
+
+  const value = useMemo<WalletApi>(
+    () => ({ status, provider, account, chainId, network: networkState(chainId, config.chainId), error, connect, switchNetwork }),
+    [status, provider, account, chainId, config.chainId, error, connect, switchNetwork],
+  );
+  return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>;
+}
+
+export function useWallet(): WalletApi {
+  const wallet = useContext(WalletContext);
+  if (!wallet) throw new Error("useWallet needs a WalletProvider");
+  return wallet;
+}
+
+// ---------------------------------------------------------------------------------------------- the chain
+
+export type ReaderState =
+  | { status: "unconfigured" }
+  | { status: "loading" }
+  | { status: "ready"; reader: ChainReader }
+  | { status: "error"; message: string };
+
+/** Opens the router and vault for reading through the configured RPC. A wrong address or an unreachable node becomes a message, not a crash. */
+export function useReader(): ReaderState {
+  const config = useConfig();
+  const [state, setState] = useState<ReaderState>(config.contractsConfigured ? { status: "loading" } : { status: "unconfigured" });
+  useEffect(() => {
+    if (!config.router || !config.vault) {
+      setState({ status: "unconfigured" });
+      return;
+    }
+    let cancelled = false;
+    const network = Network.from(config.chainId);
+    const provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network, cacheTimeout: -1 });
+    setState({ status: "loading" });
+    openReader(provider, { router: config.router, vault: config.vault })
+      .then((reader) => {
+        if (!cancelled) setState({ status: "ready", reader });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setState({ status: "error", message: err instanceof Error && err.message ? err.message : "the contracts could not be read" });
+      });
+    return () => {
+      cancelled = true;
+      provider.destroy();
+    };
+  }, [config.router, config.vault, config.rpcUrl, config.chainId]);
+  return state;
+}

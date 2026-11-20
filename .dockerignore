@@ -1,0 +1,44 @@
+# What a Docker build may see. Dependencies are installed inside the image, so nothing from this machine's node_modules goes in, and
+# no secret, no key, no local queue file and no evidence draft is ever sent to the Docker daemon.
+# A leading slash anchors an entry to the root of the build context, so /src is the repository's own src and not packages/*/src.
+
+/.git
+/.github
+/.vscode
+/.claude
+
+# Secrets and local state
+.env
+.env.*
+!.env.example
+**/*.jsonl
+**/*.lock
+**/deployment.json
+**/evidence-draft.json
+**/KILL
+
+# Built or installed output, rebuilt inside the image
+**/node_modules
+**/dist
+**/.next
+**/*.tsbuildinfo
+/artifacts
+/cache
+
+# Not needed to build or run the facilitator or the tool server
+/contracts
+/design
+/docs
+/scripts
+/src
+/test
+/hardhat.config.ts
+/eslint.config.mjs
+/README.md
+/DECISIONS.md
+/AGENTS.md
+/LICENSE
+
+# The web app is deployed separately. Its manifest stays, because the lockfile names it as a workspace member.
+/apps/web/*
+!/apps/web/package.json

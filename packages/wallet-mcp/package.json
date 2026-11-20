@@ -1,0 +1,22 @@
+{
+  "name": "@sluice/wallet-mcp",
+  "version": "0.2.0",
+  "private": true,
+  "description": "stdio MCP wallet for agents: balance, deposit instructions, price check, history, budget",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@sluice/proxy": "workspace:*",
+    "@sluice/sdk": "workspace:*",
+    "ethers": "6.8.1",
+    "zod": "3.25.76"
+  }
+}

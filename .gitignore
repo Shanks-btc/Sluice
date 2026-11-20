@@ -1,0 +1,25 @@
+node_modules/
+artifacts/
+cache/
+dist/
+coverage/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+# Drafts written by the live scripts for the founder to review. Only verified rows go in docs/EVIDENCE.md.
+evidence-draft.json
+# Written by scripts/live/deploy.ts: addresses of a deployment, no secrets.
+deployment.json
+# Written by scripts/live/deploy-test-token.ts: the address of a token with no value on the testnet.
+testnet-token.json
+# The web app: build output, generated content and fonts copied from packages, test output.
+.next/
+next-env.d.ts
+apps/web/src/generated/
+apps/web/public/fonts/
+apps/web/test-results/
+*.tsbuildinfo
+
+design/reference/

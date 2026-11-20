@@ -1,0 +1,212 @@
+/*
+  Every colour in the web app is defined here, and nowhere else. A test fails on a colour literal in any other CSS or source file.
+
+  The light palette was sampled from the reference screenshot, design/reference/palette-promptiq.png, with a script (only colour was
+  read from it). design/PALETTE.md lists every sampled value with the pixel region it came from, and every value that was adjusted
+  for contrast, with the ratios before and after. Raw palette entries are --c-*; the rest of the app reads the semantic names below
+  them (--bg, --fg, --accent-text and so on). Light is the primary theme. Dark is the same hue family (the sampled sky's hue, 201
+  degrees) on deep navy-ink, and it applies when the person picks it with the toggle (data-theme="dark") or, with no choice made, when
+  the system asks for it. The dark set is written twice because CSS cannot share one block between a media query and an attribute
+  selector; a test checks that the two copies are identical.
+
+  Which foreground sits on which background is listed in src/design/pairs.ts, and a test holds every pair to WCAG AA in both themes.
+*/
+
+:root {
+  /* Sampled from the reference image (region and method in design/PALETTE.md) */
+  --c-ice: #e3edf4;
+  --c-mid-1: #d3e8f8;
+  --c-mid-2: #aedcf9;
+  --c-sky: #92d5f8;
+  --c-soft: #eaeff3;
+  --c-card: #f3f4f5;
+  --c-ink: #21201e;
+  --c-button: #232323;
+  --c-pale: #dbebf7;
+  --c-border: #b7cdda;
+  --c-border-strong: #a7c3d6;
+  --c-ink-2: #46535c;
+  --c-white: #ffffff;
+
+  /* Derived from a sampled value and adjusted only as far as contrast needs (before and after in design/PALETTE.md) */
+  --c-muted: #4c575e;
+  --c-accent: #0b75ac;
+  --c-accent-ink: #095b85;
+  --c-accent-deep: #063e5b;
+  --c-pale-hover: #cbe6f8;
+
+  /* Fonts, radii, spacing and motion: the same scale as the rest of the family */
+  --font-sans: "Inter Tight", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-serif: "Instrument Serif", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --r-pill: 999px;
+  --r-sm: 14px;
+  --r-card: 20px;
+  --r-card-md: 28px;
+  --r-card-lg: 36px;
+  --motion-fast: 200ms;
+  --motion-base: 400ms;
+  --motion-slow: 800ms;
+  --motion-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Semantic roles, light */
+  --bg: var(--c-ice);
+  --bg-sky: var(--c-sky);
+  --hero-mid-1: var(--c-mid-1);
+  --hero-mid-2: var(--c-mid-2);
+  --surface: var(--c-card);
+  --surface-frost: rgba(243, 244, 245, 0.72);
+  --surface-soft: var(--c-soft);
+  --border: var(--c-border);
+  --border-strong: var(--c-border-strong);
+  --field-border: #578aa8;
+  --fg: var(--c-ink);
+  --fg-secondary: var(--c-ink-2);
+  --fg-muted: var(--c-muted);
+  --accent: var(--c-accent);
+  --accent-text: var(--c-accent-ink);
+  --focus: var(--c-accent);
+  --action: var(--c-button);
+  --action-hover: var(--c-ink-2);
+  --action-fg: var(--c-white);
+  --soft-btn: var(--c-pale);
+  --soft-btn-hover: var(--c-pale-hover);
+  --soft-btn-fg: var(--c-ink);
+  --on-accent: var(--c-white);
+
+  /* The hero's and the page heads' gradients: the sampled start, two mid stops and end. The names inside resolve per theme. */
+  --hero-gradient: linear-gradient(180deg, var(--bg) 0%, var(--hero-mid-1) 26%, var(--hero-mid-2) 50%, var(--bg-sky) 68%, var(--bg) 100%);
+  --page-gradient: linear-gradient(180deg, var(--bg) 0%, var(--hero-mid-1) 100%);
+
+  --info-bg: var(--c-pale);
+  --info-fg: var(--c-accent-deep);
+  --success-bg: #d9f2e4;
+  --success-fg: #0f6a3f;
+  --warn-bg: #fff0cc;
+  --warn-fg: #7a4a00;
+  --error-bg: #fbe3df;
+  --error-fg: #a0281a;
+  --neutral-bg: #dee6ec;
+  --neutral-fg: var(--c-ink-2);
+
+  --footer-bg: var(--c-ink);
+  --footer-fg: var(--c-border-strong);
+  --footer-heading: var(--c-card);
+  --footer-dim: #7a8b94;
+  --footer-line: rgba(255, 255, 255, 0.1);
+
+  --shadow-low: 0 1px 2px rgba(9, 91, 133, 0.06), 0 4px 16px rgba(9, 91, 133, 0.09);
+  --shadow-high: 0 24px 50px rgba(9, 91, 133, 0.16);
+  --water-a: #70bee6;
+  --water-b: #4fa7d5;
+  --water-c: #3492c3;
+  --gate: var(--c-ink);
+  --scrim: rgba(33, 32, 30, 0.55);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --bg: #081319;
+  --bg-sky: #10222b;
+  --hero-mid-1: #0b1920;
+  --hero-mid-2: #0e1d25;
+  --surface: #0f1d24;
+  --surface-frost: rgba(15, 29, 36, 0.72);
+  --surface-soft: #162a34;
+  --border: #223844;
+  --border-strong: #365463;
+  --field-border: #4e7a8f;
+  --fg: #e3edf4;
+  --fg-secondary: #d3e8f8;
+  --fg-muted: #a7c3d6;
+  --accent: #92d5f8;
+  --accent-text: #92d5f8;
+  --focus: #92d5f8;
+  --action: #f3f4f5;
+  --action-hover: #ffffff;
+  --action-fg: #21201e;
+  --soft-btn: #1c3440;
+  --soft-btn-hover: #234252;
+  --soft-btn-fg: #e3edf4;
+  --on-accent: #21201e;
+
+  --info-bg: #123344;
+  --info-fg: #92d5f8;
+  --success-bg: #0f2e22;
+  --success-fg: #6fe0a8;
+  --warn-bg: #3a2b0a;
+  --warn-fg: #f5c76a;
+  --error-bg: #3a1612;
+  --error-fg: #ff9a8a;
+  --neutral-bg: #1a2f3a;
+  --neutral-fg: #a7c3d6;
+
+  --footer-bg: #050d12;
+  --footer-fg: #a7c3d6;
+  --footer-heading: #e3edf4;
+  --footer-dim: #6f808a;
+  --footer-line: rgba(255, 255, 255, 0.09);
+
+  --shadow-low: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
+  --shadow-high: 0 24px 50px rgba(0, 0, 0, 0.45);
+  --water-a: #173c4f;
+  --water-b: #1e4e67;
+  --water-c: #276686;
+  --gate: #e3edf4;
+  --scrim: rgba(3, 8, 14, 0.7);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #081319;
+    --bg-sky: #10222b;
+    --hero-mid-1: #0b1920;
+    --hero-mid-2: #0e1d25;
+    --surface: #0f1d24;
+    --surface-frost: rgba(15, 29, 36, 0.72);
+    --surface-soft: #162a34;
+    --border: #223844;
+    --border-strong: #365463;
+    --field-border: #4e7a8f;
+    --fg: #e3edf4;
+    --fg-secondary: #d3e8f8;
+    --fg-muted: #a7c3d6;
+    --accent: #92d5f8;
+    --accent-text: #92d5f8;
+    --focus: #92d5f8;
+    --action: #f3f4f5;
+    --action-hover: #ffffff;
+    --action-fg: #21201e;
+    --soft-btn: #1c3440;
+    --soft-btn-hover: #234252;
+    --soft-btn-fg: #e3edf4;
+    --on-accent: #21201e;
+
+    --info-bg: #123344;
+    --info-fg: #92d5f8;
+    --success-bg: #0f2e22;
+    --success-fg: #6fe0a8;
+    --warn-bg: #3a2b0a;
+    --warn-fg: #f5c76a;
+    --error-bg: #3a1612;
+    --error-fg: #ff9a8a;
+    --neutral-bg: #1a2f3a;
+    --neutral-fg: #a7c3d6;
+
+    --footer-bg: #050d12;
+    --footer-fg: #a7c3d6;
+    --footer-heading: #e3edf4;
+    --footer-dim: #6f808a;
+    --footer-line: rgba(255, 255, 255, 0.09);
+
+    --shadow-low: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
+    --shadow-high: 0 24px 50px rgba(0, 0, 0, 0.45);
+    --water-a: #173c4f;
+    --water-b: #1e4e67;
+    --water-c: #276686;
+    --gate: #e3edf4;
+    --scrim: rgba(3, 8, 14, 0.7);
+    color-scheme: dark;
+  }
+}

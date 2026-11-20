@@ -1,0 +1,1150 @@
+{
+  "name": "Sluice payment scheme: test vectors",
+  "specification": "docs/SPEC.md",
+  "version": 1,
+  "generated": "2026-11-19",
+  "note": "Signed with throwaway keys that were generated for this file and then discarded. No private key is published. Each vector gives the address its signature must recover to. docs/SPEC.md says how to recompute every hash.",
+  "verifierNow": 1800000000,
+  "scheme": "sluice-intent",
+  "network": "eip155:1990",
+  "addresses": {
+    "router": "0x51cE000000000000000000000000000000000001",
+    "vault": "0x51ce0000000000000000000000000000000000a1",
+    "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+    "builder": "0xb01D000000000000000000000000000000000001",
+    "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+    "agent": "0x8Da04E43ae8F521d0973C0B0e64A8d3619E537d5"
+  },
+  "toolIds": [
+    {
+      "toolName": "echo",
+      "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590"
+    },
+    {
+      "toolName": "other",
+      "toolId": "0x26b60b6bee32c2d284da42d089b795640a977077a3c25b246fe0448f42ce4ec0"
+    },
+    {
+      "toolName": "token_risk_check",
+      "toolId": "0x35e9cb7793cadf08056d7b1a5a551f84e4d6a53178f44f936eed103fafc15d56"
+    }
+  ],
+  "typeStrings": {
+    "EIP712Domain": "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)",
+    "Payment": "Payment(address payer,address payee,uint256 amount,bytes32 toolId,bytes32 nonce,uint256 deadline)",
+    "Withdraw": "Withdraw(address account,address to,uint256 amount,uint256 relayerFee,bytes32 nonce,uint256 deadline)",
+    "Refund": "Refund(address payer,address to,uint256 amount,uint256 relayerFee,bytes32 nonce,uint256 deadline)",
+    "Authorize": "Authorize(address payer,address agent,uint256 budget,uint256 perCallCap,uint256 expiry,Tool[] tools,uint256 nonce,uint256 deadline)Tool(address payee,bytes32 toolId)",
+    "Revoke": "Revoke(address payer,address agent,uint256 nonce,uint256 deadline)"
+  },
+  "domains": {
+    "router": {
+      "name": "SluiceRouter",
+      "version": "1",
+      "chainId": 1990,
+      "verifyingContract": "0x51cE000000000000000000000000000000000001",
+      "separator": "0xa0f553a945be26a107b2b06565c0dc0aca94a84275abb4824183033ec8db11fe"
+    },
+    "vault": {
+      "name": "SluiceAgentVault",
+      "version": "1",
+      "chainId": 1990,
+      "verifyingContract": "0x51ce0000000000000000000000000000000000a1",
+      "separator": "0x851d99cdaf8c5cffe0cc6ef2df3fa1e97635cec754b8e9589e4c456e7e024453"
+    }
+  },
+  "paymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "mcp://tool/echo",
+      "description": "Echoes text.",
+      "mimeType": "application/json"
+    },
+    "accepts": [
+      {
+        "scheme": "sluice-intent",
+        "network": "eip155:1990",
+        "amount": "10000",
+        "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+        "payTo": "0xb01D000000000000000000000000000000000001",
+        "maxTimeoutSeconds": 300,
+        "extra": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "router": "0x51cE000000000000000000000000000000000001",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "vault": "0x51ce0000000000000000000000000000000000a1"
+        }
+      }
+    ]
+  },
+  "paymentVectors": {
+    "valid": [
+      {
+        "name": "payer signs for itself",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0xb8baa9781262a77c1124a82f7bb59f3616aea41ba0d5ada72a59e9c21f37caa4",
+          "deadline": "1800000300"
+        },
+        "digest": "0xe56e5fee8fe076ffba71f4d1b1cf51b28898a1fdb52dd10888342f22c6b20325",
+        "signature": "0xcc9fd50e03f590e64d1004b68d4c32dc101b79fa366f33bde3ac4eb3e9006801254afef682132c78c9556d6c830c08d1f0e43a2a326eb6739b0ecb5b2883aff51c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0xcc9fd50e03f590e64d1004b68d4c32dc101b79fa366f33bde3ac4eb3e9006801254afef682132c78c9556d6c830c08d1f0e43a2a326eb6739b0ecb5b2883aff51c",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0xb8baa9781262a77c1124a82f7bb59f3616aea41ba0d5ada72a59e9c21f37caa4",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "ok": true,
+          "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01"
+        }
+      },
+      {
+        "name": "an agent session key signs for the payer",
+        "signer": "0x8Da04E43ae8F521d0973C0B0e64A8d3619E537d5",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0xf09ab605601f3d663d025feaf080da55a7f48a64eaaae7b3a6829cf70d8e4c7a",
+          "deadline": "1800000300"
+        },
+        "digest": "0xd4280ffbc2d38655ab1ad2c3743734bb81cb83ed34b9e37e83049b67caacfb71",
+        "signature": "0x8988b5ebf87c3fd97f3ae84edcb9d51e434a44a0a182c0e75f88ebb82a9574d84372288a90dc84c8a834c473724a544643625f66e38e302bb7bc9fd0c9f5ec4c1b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x8988b5ebf87c3fd97f3ae84edcb9d51e434a44a0a182c0e75f88ebb82a9574d84372288a90dc84c8a834c473724a544643625f66e38e302bb7bc9fd0c9f5ec4c1b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0xf09ab605601f3d663d025feaf080da55a7f48a64eaaae7b3a6829cf70d8e4c7a",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "ok": true,
+          "signer": "0x8Da04E43ae8F521d0973C0B0e64A8d3619E537d5"
+        }
+      },
+      {
+        "name": "the payer pays more than the price",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "20000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x79a2f5fb68e8950e50fa46a143d8f12f92b5ccfc0b407663851676f071bdcda8",
+          "deadline": "1800000300"
+        },
+        "digest": "0xc747e25b95568eb944ab4790de7a76648e745c767f6e6d7f109741df86448c3e",
+        "signature": "0x6c11c2dee7ce22d6946633ab59e628602d1cff2955c2e46f703d8191f9b623f0270e2ea66de366602bc8927270100c812f100d975466e080f4e535ea3c5c84a91b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x6c11c2dee7ce22d6946633ab59e628602d1cff2955c2e46f703d8191f9b623f0270e2ea66de366602bc8927270100c812f100d975466e080f4e535ea3c5c84a91b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "20000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x79a2f5fb68e8950e50fa46a143d8f12f92b5ccfc0b407663851676f071bdcda8",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "ok": true,
+          "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01"
+        }
+      }
+    ],
+    "invalid": [
+      {
+        "name": "high-s twin of a valid signature",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x5b347a1c82fadb243acfc12c67910d09deb68869fdce46496f75dcf7534b51f0",
+          "deadline": "1800000300"
+        },
+        "digest": "0x4fe9f2dad047935ff8c9582f1c78807c05beccd66693e49ea28306fac21ccb59",
+        "signature": "0xd10b075724b62f552a3641fac1d3e820268fb7a690e8f7122878b84e255ea62a71c51d8d7c67d539893ccfb13c0574e988827de676020938c332cdda9c4104711c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x3f01003b151e6ce011a681fbc8c9ecc240c09c117ed6e827acfe0168e4c854f4b0d34820397db07291f2d369a100d69d9d0d91f0b8567f9d3e9bbc93b2f1a4831b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x5b347a1c82fadb243acfc12c67910d09deb68869fdce46496f75dcf7534b51f0",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "invalid_sluice_signature"
+        }
+      },
+      {
+        "name": "v is 0 or 1 instead of 27 or 28",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x16d12baae40dec829e8a9249e013f6dac7eaef449910a348cbf12758cd327a16",
+          "deadline": "1800000300"
+        },
+        "digest": "0x729bb6e4ba934603964e9889067e7f346f1dc11b2899466ad14794b80f9830ae",
+        "signature": "0xcf5fd8a17f7862ff641468238455035064545120e9d2ad66710539854c03db8e22e341d99b35cb1bb98188e4b19ea50797120b75e4e243676a77d26409cc4d2d1c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x3f01003b151e6ce011a681fbc8c9ecc240c09c117ed6e827acfe0168e4c854f44f2cb7dfc6824f8d6e0d2c965eff29611da14af5f6f2209e8136a1f91d449cbe01",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x16d12baae40dec829e8a9249e013f6dac7eaef449910a348cbf12758cd327a16",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "invalid_sluice_signature"
+        }
+      },
+      {
+        "name": "signature is 64 bytes",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0xe44655c4187d7fc7ae756c3856da13b1d58167b7aad55f7a7ec93a99fdd7dcde",
+          "deadline": "1800000300"
+        },
+        "digest": "0x4f355fcb191d0cdcd7c3b403f266a64714f1be322a322d0f6ec7bf4f1dca3e95",
+        "signature": "0x0c8ac0d6463f77182fd732fa0281e499127d6a9f9c62e17e760c00beb58032ab28a395b94aad600f22e0958c6738c8dbe03f8828f422ef88bd35e1021129c1aa1c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x3f01003b151e6ce011a681fbc8c9ecc240c09c117ed6e827acfe0168e4c854f44f2cb7dfc6824f8d6e0d2c965eff29611da14af5f6f2209e8136a1f91d449cbe",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0xe44655c4187d7fc7ae756c3856da13b1d58167b7aad55f7a7ec93a99fdd7dcde",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "invalid_sluice_signature"
+        }
+      },
+      {
+        "name": "expired",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0xeb0adb21af1a26bf929457cbb2bba2bf3be7481a53ab83c1bbe326e712bc8535",
+          "deadline": "1800000005"
+        },
+        "digest": "0x924fbc2f4a8036fc1d60b171f1a9118970841f2a1158df66d0b27e85f26187a7",
+        "signature": "0xb4692ecd0e0d741aa0496cf953a689d728e3de79a7adb94319964b24acdff0b94c17822dc3a684a5b01708b301db91bb2854790a728f99906c5706cc39893d071c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0xb4692ecd0e0d741aa0496cf953a689d728e3de79a7adb94319964b24acdff0b94c17822dc3a684a5b01708b301db91bb2854790a728f99906c5706cc39893d071c",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0xeb0adb21af1a26bf929457cbb2bba2bf3be7481a53ab83c1bbe326e712bc8535",
+              "deadline": "1800000005"
+            }
+          }
+        },
+        "expect": {
+          "error": "sluice_intent_expired"
+        }
+      },
+      {
+        "name": "deadline too far away",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0xb58089d726a78cece745c5f48a320b0e87a9a49590cbeabfc65ccaeeffdd0f6e",
+          "deadline": "1800100000"
+        },
+        "digest": "0x0fb62e06dd41706c9e5faa8dd92c311cedde54a2aa4574cd6ee1a9172898da60",
+        "signature": "0xa9461751b2e814507ec40c308c31e1453f16ae1d9e34010b8621f542cf4c35221296afbc19b60132107566d99395d4d4f0041829555db41459a7cba173cb9c011c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0xa9461751b2e814507ec40c308c31e1453f16ae1d9e34010b8621f542cf4c35221296afbc19b60132107566d99395d4d4f0041829555db41459a7cba173cb9c011c",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0xb58089d726a78cece745c5f48a320b0e87a9a49590cbeabfc65ccaeeffdd0f6e",
+              "deadline": "1800100000"
+            }
+          }
+        },
+        "expect": {
+          "error": "sluice_deadline_too_far"
+        }
+      },
+      {
+        "name": "amount below the price",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "9999",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0xe638dd2e5bb4259d719e6d849e572496d28fa8eeb784e6466cc09bb3669da27a",
+          "deadline": "1800000300"
+        },
+        "digest": "0xb690e4725273a31cfbeee400a9aa231dd856f70dd50946b9bf254c1c59a24b53",
+        "signature": "0x62b92760ecbec2165c8650017d182e5365a869407986ceb2d8212a517f9e922c35ab33dbbb7269cecaf1af5acf887cdd5684d50559b095f3703003c9e59594891b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x62b92760ecbec2165c8650017d182e5365a869407986ceb2d8212a517f9e922c35ab33dbbb7269cecaf1af5acf887cdd5684d50559b095f3703003c9e59594891b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "9999",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0xe638dd2e5bb4259d719e6d849e572496d28fa8eeb784e6466cc09bb3669da27a",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "sluice_amount_too_low"
+        }
+      },
+      {
+        "name": "payee is not the payTo address",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01d000000000000000000000000000000000002",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x852955b1118f9d911c49ee1fc4a4aef76fd54858322059393ce5f4b7b6283512",
+          "deadline": "1800000300"
+        },
+        "digest": "0x0bc62a0fd5eaabdbe90a290a357e9010df2922483ba95838741ac6a21146eb80",
+        "signature": "0xbf1dc6126678b253709e5c586812f6deb6c4e95f6e3626487b6323f70a433a5c74074756235a647baa9d98ea39bf5a842978cf6b923e492c2f3d8a0c29de06461c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0xbf1dc6126678b253709e5c586812f6deb6c4e95f6e3626487b6323f70a433a5c74074756235a647baa9d98ea39bf5a842978cf6b923e492c2f3d8a0c29de06461c",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01d000000000000000000000000000000000002",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x852955b1118f9d911c49ee1fc4a4aef76fd54858322059393ce5f4b7b6283512",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "sluice_payee_mismatch"
+        }
+      },
+      {
+        "name": "tool id is for another tool",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x26b60b6bee32c2d284da42d089b795640a977077a3c25b246fe0448f42ce4ec0",
+          "nonce": "0xce0188087e48b4d9fbf2a8797f00f9a634d0cf6a7ba97054a2ea2b1d5f3b89c1",
+          "deadline": "1800000300"
+        },
+        "digest": "0x3cdce3f5c4ce82cb28470b9992e5a856a18deccb11b87748f4c837be71c011e1",
+        "signature": "0x8593f665456593bc9ad040f111324d9de3974fa429facf282ec31bf326aa5bb77f94709981cd9f3cc67c743a9b5c5b669bde8b1936b96d5a8403b64b102632fa1c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x8593f665456593bc9ad040f111324d9de3974fa429facf282ec31bf326aa5bb77f94709981cd9f3cc67c743a9b5c5b669bde8b1936b96d5a8403b64b102632fa1c",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x26b60b6bee32c2d284da42d089b795640a977077a3c25b246fe0448f42ce4ec0",
+              "nonce": "0xce0188087e48b4d9fbf2a8797f00f9a634d0cf6a7ba97054a2ea2b1d5f3b89c1",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "sluice_tool_mismatch"
+        }
+      },
+      {
+        "name": "the client edited the price in its copy of the terms",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x49c685c68c7d079ffd4b3577d57b6dee9409e82f105c10a68cf29bf5d0dcba41",
+          "deadline": "1800000300"
+        },
+        "digest": "0x7fb0ab34b5e779ef18c54955f5df2221786cecfc809f80a44ebed0248352fe53",
+        "signature": "0x05609ff0c8c0b84f4d48775721e870099a4057c7aefcf6b58ed59804c3d16a2d110fd39f92996010e6a6cab18c8a94791f9b51dbc2327d94f71755ba74c0f36f1b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "1",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x05609ff0c8c0b84f4d48775721e870099a4057c7aefcf6b58ed59804c3d16a2d110fd39f92996010e6a6cab18c8a94791f9b51dbc2327d94f71755ba74c0f36f1b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x49c685c68c7d079ffd4b3577d57b6dee9409e82f105c10a68cf29bf5d0dcba41",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "sluice_accepted_mismatch"
+        }
+      },
+      {
+        "name": "scheme is not sluice-intent",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x37b426b5e35c45ca9f0c7a13257ef306036488c1188cd5832a084c079c55907e",
+          "deadline": "1800000300"
+        },
+        "digest": "0x3cb76507d1da3a098a4b655cf4f7e5a9948dcd1d5040e4464e9692337bdf0d4d",
+        "signature": "0xaf14c3a03ee6c51599d543d58c0c3bdfc4536ed70f316a7fede66fa4e0f927e033285f09257f4cf9686d3784b643ec5be96a41f7fa94563eaa9e4b05dffd70c81c",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "exact",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0xaf14c3a03ee6c51599d543d58c0c3bdfc4536ed70f316a7fede66fa4e0f927e033285f09257f4cf9686d3784b643ec5be96a41f7fa94563eaa9e4b05dffd70c81c",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x37b426b5e35c45ca9f0c7a13257ef306036488c1188cd5832a084c079c55907e",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "invalid_scheme"
+        }
+      },
+      {
+        "name": "network is not eip155:1990",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x8a7110a0795fa89be24b1ba6c2effe880dad60f742b0e9ae2e633e713ee92a97",
+          "deadline": "1800000300"
+        },
+        "digest": "0xab7b5ae2e43aea613506df9f8a17316d8c92f1f7067d68b96a1d879238be7eb7",
+        "signature": "0x97cf571784a4755f12a07ba274984aa089e6d3dead39f226342c4d8cd6f39e292ccf5ed7c94a96a03e238bbb733c3a896d788abd3e62f70535f58cef6e67a8da1b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:8453",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x97cf571784a4755f12a07ba274984aa089e6d3dead39f226342c4d8cd6f39e292ccf5ed7c94a96a03e238bbb733c3a896d788abd3e62f70535f58cef6e67a8da1b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x8a7110a0795fa89be24b1ba6c2effe880dad60f742b0e9ae2e633e713ee92a97",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "invalid_network"
+        }
+      },
+      {
+        "name": "the terms name another router",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x496d7b354387598725d520dd6a5f613396fd482255d1265984726838cf94c944",
+          "deadline": "1800000300"
+        },
+        "digest": "0x5d47ebb1076bbb78dee17767b6cf40c361f2d8a8a78dd6cf3e75764b78299655",
+        "signature": "0xb273a89b784c428eb2b745d175e72a9cd98dbcc567e635a9c6cb3e3699b6e2dc428fc7d6262e0895e40b0a203015e65adb4afcc30eaff64f361ee9af131a81961b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51Ce000000000000000000000000000000000002",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0xb273a89b784c428eb2b745d175e72a9cd98dbcc567e635a9c6cb3e3699b6e2dc428fc7d6262e0895e40b0a203015e65adb4afcc30eaff64f361ee9af131a81961b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x496d7b354387598725d520dd6a5f613396fd482255d1265984726838cf94c944",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "error": "invalid_sluice_router"
+        }
+      }
+    ],
+    "recoversToAnotherKey": [
+      {
+        "name": "signed for chain id 1",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1,
+          "verifyingContract": "0x51cE000000000000000000000000000000000001"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0x42923727ffe2047488c0bc19175d34db51dd5b262bc49d728c5756149b8fbe60",
+          "deadline": "1800000300"
+        },
+        "digest": "0x9098a30e00639fa0e790bea7a7302f4ffaa5ba8c099df7e51fa9d9e8823b84ff",
+        "signature": "0x87def47ddead5e21eed4ae20b450d2e3819bf1a0324adee593dbc352233669e7192ac765e2e360d86661caff50e04bbaf3a70710b0b6dee04717912039b502f31b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x87def47ddead5e21eed4ae20b450d2e3819bf1a0324adee593dbc352233669e7192ac765e2e360d86661caff50e04bbaf3a70710b0b6dee04717912039b502f31b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0x42923727ffe2047488c0bc19175d34db51dd5b262bc49d728c5756149b8fbe60",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "ok": true,
+          "signerIsPayer": false,
+          "facilitatorError": "sluice_session_not_found"
+        }
+      },
+      {
+        "name": "signed for another router",
+        "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+        "domain": {
+          "name": "SluiceRouter",
+          "version": "1",
+          "chainId": 1990,
+          "verifyingContract": "0x51Ce000000000000000000000000000000000002"
+        },
+        "message": {
+          "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "amount": "10000",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+          "nonce": "0xa4062b73ff2779cb69ced7648c1dfd580b9929e0c32eda93e2de4c3cfd17dffc",
+          "deadline": "1800000300"
+        },
+        "digest": "0x1caea1492e4e5c36f67a92c5964dd192bc66def15ae1a58f456be2b8d378a4d8",
+        "signature": "0x716899cb7f34865396a130d848b58d5b4066cd39c4b89656d38aca0ad50cad53317462e457aaeddeb37c5b3396fd00399ecb281cee84e6464eba65bb150fb3091b",
+        "payload": {
+          "x402Version": 2,
+          "resource": {
+            "url": "mcp://tool/echo",
+            "description": "Echoes text.",
+            "mimeType": "application/json"
+          },
+          "accepted": {
+            "scheme": "sluice-intent",
+            "network": "eip155:1990",
+            "amount": "10000",
+            "asset": "0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5",
+            "payTo": "0xb01D000000000000000000000000000000000001",
+            "maxTimeoutSeconds": 300,
+            "extra": {
+              "name": "SluiceRouter",
+              "version": "1",
+              "router": "0x51cE000000000000000000000000000000000001",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "vault": "0x51ce0000000000000000000000000000000000a1"
+            }
+          },
+          "payload": {
+            "signature": "0x716899cb7f34865396a130d848b58d5b4066cd39c4b89656d38aca0ad50cad53317462e457aaeddeb37c5b3396fd00399ecb281cee84e6464eba65bb150fb3091b",
+            "authorization": {
+              "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+              "payee": "0xb01D000000000000000000000000000000000001",
+              "amount": "10000",
+              "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590",
+              "nonce": "0xa4062b73ff2779cb69ced7648c1dfd580b9929e0c32eda93e2de4c3cfd17dffc",
+              "deadline": "1800000300"
+            }
+          }
+        },
+        "expect": {
+          "ok": true,
+          "signerIsPayer": false,
+          "facilitatorError": "sluice_session_not_found"
+        }
+      }
+    ]
+  },
+  "withdraw": {
+    "domain": {
+      "name": "SluiceRouter",
+      "version": "1",
+      "chainId": 1990,
+      "verifyingContract": "0x51cE000000000000000000000000000000000001"
+    },
+    "message": {
+      "account": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+      "to": "0xb01D000000000000000000000000000000000001",
+      "amount": "5000",
+      "relayerFee": "0",
+      "nonce": "0x149b0750e99088b05a51ae236cf492eec251ea60fa6614a1e40793e10afc303e",
+      "deadline": "1800000600"
+    },
+    "digest": "0x94689f945c745e4bb467c544451a19d7b441a41666d30406b1dc5bad75ef811a",
+    "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+    "signature": "0x511441c2c0fffea67866a06a7883b8cc485e504cbd15c1a75aaf1d61212567b64f4240419acd6a5e77a13abdd7561260c4115122f0d9a29627ab40449abb970c1b"
+  },
+  "refund": {
+    "domain": {
+      "name": "SluiceRouter",
+      "version": "1",
+      "chainId": 1990,
+      "verifyingContract": "0x51cE000000000000000000000000000000000001"
+    },
+    "message": {
+      "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+      "to": "0xb01D000000000000000000000000000000000001",
+      "amount": "7000",
+      "relayerFee": "0",
+      "nonce": "0x09529f87efd4943815b774d906b25a700e4b372ee644d48b16d2709ae1c284f8",
+      "deadline": "1800000600"
+    },
+    "digest": "0x467023e89ae20c617c2b1729ac043fc8f1c4c97701c5eaf16ea6645543fcaeee",
+    "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+    "signature": "0x84569f1a4ea7b7ac7d357a9faa05b9ce495b660688914b83f497718b206a676458fe999ff8444db798a2866dfccfd9ac666382700b691ce7100679e602cf132f1b"
+  },
+  "authorize": {
+    "domain": {
+      "name": "SluiceAgentVault",
+      "version": "1",
+      "chainId": 1990,
+      "verifyingContract": "0x51ce0000000000000000000000000000000000a1"
+    },
+    "message": {
+      "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+      "agent": "0x8Da04E43ae8F521d0973C0B0e64A8d3619E537d5",
+      "budget": "500000",
+      "perCallCap": "20000",
+      "expiry": "1800086400",
+      "tools": [
+        {
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "toolId": "0x30aac30d8e1f24996aaf406e85b7281051192346b2dcbea9be2461c29b1bc590"
+        },
+        {
+          "payee": "0xb01D000000000000000000000000000000000001",
+          "toolId": "0x35e9cb7793cadf08056d7b1a5a551f84e4d6a53178f44f936eed103fafc15d56"
+        }
+      ],
+      "nonce": "0",
+      "deadline": "1800000600"
+    },
+    "digest": "0x7562c593b5a10feb8e8dbdb6f09dd3d4038e4f935d0f2f57bbd64e88e123e57f",
+    "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+    "signature": "0x192ed80ddf73d322d2ce7bb9c6bc5c31b4f7a2ec476d2930e0b8334ea0767faf4cfc9039da60af6a8d816d8d271e01681db0b60e439212587640949f4f4fb9261b"
+  },
+  "revoke": {
+    "domain": {
+      "name": "SluiceAgentVault",
+      "version": "1",
+      "chainId": 1990,
+      "verifyingContract": "0x51ce0000000000000000000000000000000000a1"
+    },
+    "message": {
+      "payer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+      "agent": "0x8Da04E43ae8F521d0973C0B0e64A8d3619E537d5",
+      "nonce": "1",
+      "deadline": "1800000600"
+    },
+    "digest": "0x1535da2a3f74bf8b93733859f63a404ec77d757cb77482319876c0849401719d",
+    "signer": "0xb53341a6706D74ee98A7b4193eCFF68395377C01",
+    "signature": "0x97d74f8b04d1437430c44402dceb2efda0f97338d23c680cd325bd2c8c9478461cffc3df7975be2d39be04c92530c42cf08457fc5e93358112c164f3c920a0221b"
+  }
+}

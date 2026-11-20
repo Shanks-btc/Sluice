@@ -1,0 +1,19 @@
+{
+  "name": "@sluice/proxy",
+  "version": "0.2.0",
+  "private": true,
+  "description": "stdio MCP payment proxy for agents, with an owner budget",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@sluice/sdk": "workspace:*",
+    "ethers": "6.8.1",
+    "zod": "3.25.76"
+  }
+}

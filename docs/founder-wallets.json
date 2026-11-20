@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "updated": "2026-11-19",
+  "description": "Wallets that belong to the founder, left out of the paid-call counts in `pnpm evidence:summary`. A payment where one of these is the payer, the payee or the signing key is not counted. The list is empty until the founder adds their wallets; nothing is guessed. Change it only by adding a new history entry with a higher version.",
+  "wallets": [],
+  "history": [
+    { "version": 1, "date": "2026-11-19", "note": "Created empty. The founder adds their own wallets, with a label each, and raises the version." }
+  ]
+}

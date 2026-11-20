@@ -1,0 +1,19 @@
+{
+  "name": "@sluice/paid-tools",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Three paid MCP tools for QIE developers: token risk check, QIEDEX quote, contract lookup",
+  "license": "MIT",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@sluice/sdk": "workspace:*",
+    "ethers": "6.8.1",
+    "zod": "3.25.76"
+  }
+}

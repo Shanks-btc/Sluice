@@ -1,0 +1,30 @@
+{
+  "name": "@sluice/web",
+  "version": "0.3.0",
+  "private": true,
+  "description": "The Sluice web app: landing page, simulated demo, builder dashboard, payer budget screen, docs and evidence",
+  "license": "MIT",
+  "scripts": {
+    "content": "pnpm -w run web:content",
+    "fonts": "node scripts/fonts.mjs",
+    "dev": "pnpm -w run web:content && node scripts/fonts.mjs && next dev --webpack",
+    "build": "pnpm -w run web:content && node scripts/fonts.mjs && next build --webpack",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "5.3.0",
+    "@fontsource/instrument-serif": "5.3.0",
+    "@fontsource/inter-tight": "5.3.0",
+    "@sluice/paid-tools": "workspace:*",
+    "@sluice/sdk": "workspace:*",
+    "ethers": "6.8.1",
+    "next": "16.4.6",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "playwright-core": "1.64.1"
+  }
+}

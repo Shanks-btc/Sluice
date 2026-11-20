@@ -1,0 +1,69 @@
+name: I tried Sluice
+description: Tell us what happened when you tried Sluice as a tool builder, as the owner of an agent, or as a developer reading it.
+title: "I tried Sluice: "
+labels: ["tried-it"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for trying it. Say what happened, including what did not work. A report that says something broke is as useful as one that says it went well.
+
+        **What counts as a user.** A person is counted as having used Sluice only if the address you give below appears in a settlement on the chain, which the project checks by reading the chain, and the address is not one of the project's own wallets (listed in `docs/founder-wallets.json`). A report without a transaction is still read, and is still useful, and is not counted as a user. The counts are made by `pnpm evidence:summary`, which reads the chain, and not from these reports.
+  - type: dropdown
+    id: role
+    attributes:
+      label: What were you doing?
+      options:
+        - I put a price on an MCP tool (a builder)
+        - I paid for a tool, or set up an agent to pay (a payer)
+        - I read or ran the code (a developer)
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Which network?
+      options:
+        - A local chain or a fork
+        - QIE testnet
+        - QIE mainnet
+    validations:
+      required: true
+  - type: input
+    id: tx
+    attributes:
+      label: The transaction hash of a settlement you were part of
+      description: Optional. A 0x hash from a settlement where your address paid or was paid, on the network above. Without one, your report is read and not counted as a user.
+      placeholder: "0x..."
+  - type: input
+    id: address
+    attributes:
+      label: Your address in that settlement
+      description: Optional. The address that paid, or was paid. It is public on the chain already. Leave it out if you would rather.
+      placeholder: "0x..."
+  - type: textarea
+    id: broke
+    attributes:
+      label: What did not work, or was confusing?
+      description: The step, what you expected, and what you saw. Leave out keys, and anything you would not want public.
+    validations:
+      required: true
+  - type: textarea
+    id: worked
+    attributes:
+      label: What worked?
+  - type: input
+    id: version
+    attributes:
+      label: Which pages or commands did you follow, and on what system?
+      description: For example, docs/TRY-IT-AGENT.md on Windows 11 with Node 22.
+  - type: checkboxes
+    id: consent
+    attributes:
+      label: Consent
+      options:
+        - label: I am happy for this report, and the address and transaction hash in it, to be public in this repository's issues.
+          required: true
+        - label: I did not put a private key, a seed phrase or a password in this report.
+          required: true

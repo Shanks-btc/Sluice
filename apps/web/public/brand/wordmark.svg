@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="168" height="40" viewBox="0 0 168 40" fill="none" role="img" aria-label="Sluice">
+  <title>Sluice</title>
+  <g transform="translate(2 4)">
+    <path d="M3 9h9v7h8v7h9" stroke="#21201e" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M16 4v17" stroke="#0b75ac" stroke-width="3.2" stroke-linecap="round"/>
+  </g>
+  <text x="44" y="28" font-family="Inter Tight, system-ui, sans-serif" font-size="26" font-weight="600" letter-spacing="-0.6" fill="#21201e">Sluice</text>
+</svg>
