@@ -23,3 +23,10 @@ apps/web/test-results/
 *.tsbuildinfo
 
 design/reference/
+
+*.key
+*.keystore
+*.pem
+.env
+.env.*
+!.env.example
