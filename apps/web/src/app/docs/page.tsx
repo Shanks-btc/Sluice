@@ -22,7 +22,7 @@ const ABOUT: Record<string, string> = {
   "paid-tools": "Three example paid tools with real, read-only output.",
 };
 
-const GROUPS: DocGroup[] = ["Start", "Reference", "Packages"];
+const GROUPS: DocGroup[] = ["Start", "Reference", "Packages", "Legal"];
 
 export default function DocsIndex() {
   return (

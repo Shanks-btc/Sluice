@@ -69,30 +69,47 @@ Blank until you tick them. A box is ticked by you, on the day you did the step, 
 
 Rehearsal on the testnet:
 
-- [ ] Deployed the test token (`pnpm live:test-token`)
-- [ ] Pre-flight check said GO on the testnet
-- [ ] Deployed the router on the testnet, and recorded it
-- [ ] Ran the smoke run on the testnet, and recorded its transactions
-- [ ] Hosted the facilitator against the testnet, and did its checklist (restart drill, kill switch drill)
-- [ ] Hosted the tool server against the testnet, and did its checklist
-- [ ] Made a paid call through the proxy to the hosted tool server, and recorded what the chain showed
+`pnpm rehearsal:testnet` covers the items marked below, from two throwaway keys, and prints what the chain showed. What it has done is in [REHEARSAL-LOG.md](REHEARSAL-LOG.md); as of 2026-11-20 it has not sent a transaction, because both testnet addresses held no QIE. A run of that command does not tick a box here. These boxes are for what you did yourself, and every one stays empty until you tick it.
+
+- [ ] Deployed the test token (`pnpm live:test-token`) (covered by the automated run)
+- [ ] Pre-flight check said GO on the testnet (covered by the automated run)
+- [ ] Deployed the router on the testnet, and recorded it (covered by the automated run)
+- [ ] Ran the smoke run on the testnet, and recorded its transactions (covered by the automated run)
+- [ ] Hosted the facilitator against the testnet, and did its checklist (restart drill, kill switch drill) (the automated run does both drills against a copy on one machine, not a hosted service)
+- [ ] Hosted the tool server against the testnet, and did its checklist (the automated run starts a copy on one machine, not a hosted service)
+- [ ] Made a paid call through the proxy to the hosted tool server, and recorded what the chain showed (the automated run makes three through a local copy)
 - [ ] Tried Claude Code with the proxy ([REAL-CLIENT-TEST.md](REAL-CLIENT-TEST.md))
 - [ ] Tried Cursor with the proxy ([REAL-CLIENT-TEST.md](REAL-CLIENT-TEST.md))
 
 Mainnet:
 
-- [ ] Funded the deployer and the relayer as in the funding plan
+- [ ] Made `deployer-mainnet.key` and `relayer-mainnet.key` (or my own keys) and noted both addresses
+- [ ] Ran `pnpm live:funding` with the two addresses, and funded the deployer and the relayer to what it printed
+- [ ] Ran `pnpm live:facts` and read what it said about QUSDC's roles against [RISKS.md](RISKS.md)
 - [ ] Pre-flight check said GO on mainnet, before the deploy
 - [ ] Dry-ran the deploy, and read what it would send
 - [ ] Deployed the router with caps, and recorded it
+- [ ] Wrote the settings files with `pnpm live:wire --network mainnet`, and filled in what it left empty
 - [ ] Pre-flight check said GO with the deployment record
-- [ ] Verified the router's and the vault's source on the explorer, and recorded it
+- [ ] Verified the router's source on the explorer, and recorded it (the vault has no evidence row: see EXPLORER-VAULT-INVESTIGATION.md)
+- [ ] Ran `pnpm live:vaultcheck`, and noted the vault's code hash and the block it was read at
 - [ ] Ran the smoke run, and recorded its transactions
 - [ ] Hosted the facilitator against mainnet, and did its checklist
 - [ ] Hosted the tool server against mainnet, and did its checklist
 - [ ] Did the funded run of about 10 QUSDC, and recorded what the chain showed
 - [ ] Withdrew the builder's earnings, and recorded it
 - [ ] Ran `pnpm evidence:check` and `pnpm evidence:summary`, and read them
+
+The live web app (nothing below has been done by Claude Code, and each box stays empty until you tick it):
+
+- [ ] Set the web project's settings, including `NEXT_PUBLIC_TOOLS_URL` and a session cap I chose ([DEPLOY-WEB.md](DEPLOY-WEB.md))
+- [ ] Added the web site's origin to the facilitator's and the tool server's lists of allowed sites
+- [ ] Did the live demo once on the testnet with a small amount, from a real wallet, and wrote down what the wallet showed
+- [ ] Did the live demo once on mainnet with the smallest deposit, and recorded it
+- [ ] Checked `/status` and `/api/status` on the deployed site, and set the alert hooks and the daily checks in [OPERATIONS.md](OPERATIONS.md)
+- [ ] Did the kill-switch drill and the journal restore drill from [OPERATIONS.md](OPERATIONS.md) on the hosted services
+- [ ] Had a lawyer read the terms and the privacy notice ([TERMS.md](TERMS.md), [PRIVACY.md](PRIVACY.md)), changed them, and noted who and when
+- [ ] Read `/security` against what I know of the deployment, and corrected anything that is not so
 
 Other people:
 

@@ -56,5 +56,10 @@
     "packages/*/dist",
     "examples/*/dist",
     "apps/web/.next"
-  ]
+  ],
+  "ts-node": {
+    "require": [
+      "tsconfig-paths/register"
+    ]
+  }
 }

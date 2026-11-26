@@ -16,6 +16,13 @@ export const MEASURED_GAS = {
   topUpTransfer: 21_000n,
   /** A batch of 50 intents, each from a different payer to a different builder: the most expensive batch measured. */
   batch50Worst: 3_291_319n,
+  /** Batches of 1 and of 10 intents, each from a different payer to a different builder (scenario B in docs/GAS.md). */
+  batch1Worst: 111_228n,
+  batch10Worst: 695_167n,
+  /** What a facilitator pays for a person who signs and has no QIE (docs/GAS.md). */
+  authorizeBySig: 134_066n,
+  withdrawBySig: 101_687n,
+  refundBySig: 101_639n,
 } as const;
 
 /** The eight transactions of scripts/live/smoke.ts, with the gas each used when measured. */

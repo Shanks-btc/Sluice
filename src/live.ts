@@ -120,7 +120,16 @@ function address(env: Env, name: string, fallback?: string): string {
   }
 }
 
-/** Owner, fee recipient and fee have no defaults: they must be chosen on purpose. */
+/** The fee when SLUICE_FEE_BPS is not set: 1%. The contract refuses more than 200 basis points (2%). */
+export const DEFAULT_FEE_BPS = 100;
+export const MAX_FEE_BPS = 200;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/**
+ * The owner and the fee recipient have no defaults: they must be chosen on purpose, and neither may be the zero address (an owner there
+ * could never change the fee; a fee recipient there would credit fees nobody can withdraw). The fee defaults to 1%. The token is QUSDC
+ * on mainnet and nothing else.
+ */
 export function readDeployParams(env: Env, network: Network): DeployParams {
   const token = address(env, "SLUICE_TOKEN", network === "mainnet" ? QUSDC_ADDRESS : undefined);
   // On mainnet the token is QUSDC and nothing else: a typo here would lock real funds in the wrong asset.
@@ -129,11 +138,47 @@ export function readDeployParams(env: Env, network: Network): DeployParams {
   }
   const owner = address(env, "SLUICE_OWNER");
   const feeRecipient = address(env, "SLUICE_FEE_RECIPIENT");
+  if (owner === ZERO_ADDRESS) throw new GuardError("SLUICE_OWNER is the zero address: nobody could ever change the fee. Name the multisig that should own the router");
+  if (feeRecipient === ZERO_ADDRESS) throw new GuardError("SLUICE_FEE_RECIPIENT is the zero address: fees would be credited to an address nobody controls");
   const rawFee = env.SLUICE_FEE_BPS?.trim();
-  if (!rawFee || !/^\d{1,3}$/.test(rawFee) || Number(rawFee) > 200) {
-    throw new GuardError("SLUICE_FEE_BPS must be a whole number from 0 to 200");
+  if (rawFee && (!/^\d{1,3}$/.test(rawFee) || Number(rawFee) > MAX_FEE_BPS)) {
+    throw new GuardError(`SLUICE_FEE_BPS must be a whole number from 0 to ${MAX_FEE_BPS} (it is in basis points: 100 is 1%)`);
   }
-  return { token, owner, feeRecipient, feeBps: Number(rawFee) };
+  return { token, owner, feeRecipient, feeBps: rawFee ? Number(rawFee) : DEFAULT_FEE_BPS };
+}
+
+/**
+ * Keeps the roles apart. The deployer key is a hot key that is used once, the relayer key is a hot key that pays gas, and the router's owner
+ * and fee recipient are for an account that holds control, ideally a multisig. A deployment that makes either of the first two the owner or
+ * the fee recipient is refused, whatever the network, and says which. On mainnet the relayer's address must be given too, so that this check
+ * cannot be skipped by leaving it out; elsewhere it is checked when it is given.
+ */
+export function checkDeployRoles(params: DeployParams, who: { deployer: string; relayer?: string }, network: Network): void {
+  const deployer = getAddress(who.deployer);
+  if (network === "mainnet" && !who.relayer) {
+    throw new GuardError("on mainnet, give the relayer's address (SLUICE_RELAYER, or --relayer) so the deploy can check it is not the owner or the fee recipient");
+  }
+  const relayer = who.relayer ? getAddress(who.relayer) : undefined;
+  if (relayer && relayer === deployer) throw new GuardError("the deployer key and the relayer are the same address: the relayer is a hot key that holds only gas money and needs a key of its own");
+  const owner = getAddress(params.owner);
+  const feeRecipient = getAddress(params.feeRecipient);
+  if (owner === deployer) throw new GuardError("SLUICE_OWNER is the deployer key's own address: the deployer is a hot key, and the owner should be an account that holds control, such as a multisig");
+  if (feeRecipient === deployer) throw new GuardError("SLUICE_FEE_RECIPIENT is the deployer key's own address: choose the account that should receive the fees");
+  if (relayer && owner === relayer) throw new GuardError("SLUICE_OWNER is the relayer's address: the facilitator refuses to run as the router's owner, and a hot key must not hold control");
+  if (relayer && feeRecipient === relayer) throw new GuardError("SLUICE_FEE_RECIPIENT is the relayer's address: the facilitator refuses to run as the fee recipient");
+}
+
+/** The token must be a contract with six decimals. Reads only. Called before anything is sent, so a wrong address costs nothing. */
+export async function checkDeployToken(provider: Provider, token: string): Promise<void> {
+  const where = getAddress(token);
+  if ((await provider.getCode(where)) === "0x") throw new GuardError(`there is no contract at the token address ${where} on this chain`);
+  let decimals: bigint;
+  try {
+    decimals = (await new Contract(where, ERC20_ABI, provider).getFunction("decimals")()) as bigint;
+  } catch {
+    throw new GuardError(`the token at ${where} did not answer decimals(), so it is not an ERC-20 token this router can hold`);
+  }
+  if (Number(decimals) !== 6) throw new GuardError(`the token at ${where} has ${decimals} decimals, and Sluice needs 6`);
 }
 
 export type SmokeParams = { router: string; payee?: string };
@@ -209,7 +254,8 @@ async function evidenceFrom(
 export type Deployed = { router: string; vault: string; hash: string; block: number };
 
 export async function deployRouter(ctx: LiveContext, p: DeployParams): Promise<Deployed> {
-  if (p.feeBps > 200) throw new GuardError("fee above the 200 bps cap");
+  if (p.feeBps > MAX_FEE_BPS) throw new GuardError(`fee above the ${MAX_FEE_BPS} bps cap`);
+  await checkDeployToken(ctx.provider, p.token);
   const { abi, bytecode, deployedBytecode } = loadArtifact("PaymentRouter");
   const vaultAbi = loadArtifact("AgentVault").abi;
   const factory = new ContractFactory(abi as never, bytecode, ctx.signer);
@@ -231,7 +277,7 @@ export async function deployRouter(ctx: LiveContext, p: DeployParams): Promise<D
     ["owner", getAddress(await router.owner()), getAddress(p.owner)],
     ["fee recipient", getAddress(await router.feeRecipient()), getAddress(p.feeRecipient)],
     ["fee bps", Number(await router.feeBps()), p.feeBps],
-    ["max fee bps", Number(await router.MAX_FEE_BPS()), 200],
+    ["max fee bps", Number(await router.MAX_FEE_BPS()), MAX_FEE_BPS],
   ];
   for (const [name, got, want] of checks) {
     if (got !== want) throw new Error(`deployed router has the wrong ${name}`);
@@ -340,7 +386,7 @@ export function evidenceLines(rows: EvidenceRow[]): string[] {
 // ------------------------------------------------------------------------------------------ recording
 
 /** The recorder's claim for a smoke-run event, when there is one. A payer-signed settle was submitted by the payer, so it is not a facilitator's paid call. */
-const CLAIM_FOR_EVENT: Readonly<Record<string, string>> = { Deposited: "deposit", Withdrawn: "withdraw" };
+const CLAIM_FOR_EVENT: Readonly<Record<string, string>> = { Deposited: "deposit", Withdrawn: "withdraw", Refunded: "refund" };
 
 /**
  * The commands that record what a run did, one per transaction that a claim type covers. Nothing is pasted into docs/EVIDENCE.md by hand:

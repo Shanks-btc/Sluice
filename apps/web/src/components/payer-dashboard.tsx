@@ -11,6 +11,7 @@ import { formatQie, formatUsdc, formatUtc, isAddress, parseAmountInput, shortAdd
 import { readPayer } from "../lib/reads";
 import type { PayerView } from "../lib/reads";
 import { FlowDialog } from "./flow-dialog";
+import { HistoryPanel } from "./history-panel";
 import { NotConfigured } from "./builder-dashboard";
 import { useConfig, useReader, useWallet } from "./providers";
 import { useFlowDeps } from "./use-flow";
@@ -34,6 +35,7 @@ export function PayerDashboard() {
   const [readError, setReadError] = useState<string | null>(null);
   const [extraAgents, setExtraAgents] = useState<string[]>([]);
   const [session, setSession] = useState<FlowSession | null>(null);
+  const [historyKey, setHistoryKey] = useState(0);
   const [errors, setErrors] = useState<Record<string, string | null>>({});
 
   const [deposit, setDeposit] = useState("");
@@ -322,11 +324,17 @@ export function PayerDashboard() {
         </>
       ) : null}
 
+      {readerState.status === "ready" && account && reader ? <HistoryPanel reader={reader} account={account} refreshKey={historyKey} /> : null}
+
       <FlowDialog
         session={session}
         onClose={() => {
           setSession(null);
+          setHistoryKey((k) => k + 1);
           void load();
+        }}
+        onRetry={(plan) => {
+          if (deps) setSession(new FlowSession(plan, deps));
         }}
       />
     </div>

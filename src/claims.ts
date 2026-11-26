@@ -46,6 +46,42 @@ export const DEPLOYMENT_CLAIMS: readonly RegExp[] = [
 /** A line that says the opposite of a claim, or makes it conditional. */
 const NEGATED = /\b(not|no|nothing|none|never|until|unless|if|before|once|after|when|will|would|can|cannot|yet|without|only if)\b|n't\b/i;
 
+/**
+ * Prose that says the vault's source is verified on the explorer, in any of the ways it could be put: the vault verified, verified source
+ * for the vault, both contracts verified, the router and the vault verified. Such a sentence is refused unless the explorer's own answer
+ * saying so is on file (src/vault-record.ts), and even then it has to name the explorer, because that is whose statement it is.
+ */
+export const VAULT_VERIFIED_CLAIMS: readonly RegExp[] = [
+  /\b(?:agentvault|vault)\b[^.\n]{0,100}\bverif(?:ied|ies|y|ication)\b/i,
+  /\bverif(?:ied|ies|y|ication)\b[^.\n]{0,100}\b(?:agentvault|vault)\b/i,
+  /\bboth contracts\b[^.\n]{0,100}\bverif(?:ied|y|ication)\b/i,
+  /\bverif(?:ied|y|ication)\b[^.\n]{0,100}\bboth contracts\b/i,
+  /\b(?:payment ?router|router)(?:'s)? and (?:the )?(?:agent ?vault|vault)(?:'s)?\b[^.\n]{0,100}\bverif(?:ied|y|ication)\b/i,
+  /\bverif(?:ied|y|ication)\b[^.\n]{0,100}\b(?:payment ?router|router)(?:'s)? and (?:the )?(?:agent ?vault|vault)\b/i,
+];
+
+/** A sentence that denies it. Narrower than NEGATED on purpose: "after the explorer verifies the vault" is still the claim. */
+const VAULT_DENIED = /\b(not|no|never|cannot|nothing|none|without|neither|nor|unverified|refuses?|refused)\b|n't\b/i;
+
+/**
+ * The sentences of a line that say the vault is verified on the explorer, without denying it, and without the right to say it: that is,
+ * with no record of the explorer showing it (`shown` false), or with one but not naming the explorer in the sentence.
+ */
+export function vaultVerifiedClaims(line: string, shown = false): string[] {
+  const out: string[] = [];
+  for (const raw of line.split(/(?<=[.!?])\s+/)) {
+    // The folder the manual route's files are written to is called verification, and holds the vault's files: a path is not a claim.
+    const sentence = raw.replace(/artifacts[\\/]+verification[\\/]*/gi, "artifacts/");
+    if (VAULT_DENIED.test(sentence)) continue;
+    if (shown && /\bexplorer\b/i.test(sentence)) continue;
+    for (const pattern of VAULT_VERIFIED_CLAIMS) {
+      const hit = pattern.exec(sentence);
+      if (hit) out.push(hit[0]);
+    }
+  }
+  return out;
+}
+
 /** Splits text into lines with their numbers, dropping fenced code blocks (but keeping mermaid diagrams). */
 function proseLines(text: string): Array<{ n: number; text: string }> {
   const out: Array<{ n: number; text: string }> = [];
@@ -62,8 +98,11 @@ function proseLines(text: string): Array<{ n: number; text: string }> {
   return out;
 }
 
-/** Scans one document. `mainnetRows` is how many verified mainnet rows docs/EVIDENCE.md has. */
-export function scanClaims(file: string, text: string, mainnetRows: number): Finding[] {
+/**
+ * Scans one document. `mainnetRows` is how many verified mainnet rows docs/EVIDENCE.md has, and `vaultShown` is whether the explorer's
+ * answer showing verified source for the vault is on file. Left out, the strictest case is assumed.
+ */
+export function scanClaims(file: string, text: string, mainnetRows: number, vaultShown = false): Finding[] {
   const findings: Finding[] = [];
   for (const { n, text: line } of proseLines(text)) {
     for (const { rule, pattern } of BANNED) {
@@ -76,6 +115,9 @@ export function scanClaims(file: string, text: string, mainnetRows: number): Fin
         if (hit) findings.push({ file, line: n, rule: "no deployment claim without a mainnet evidence row", text: hit[0] });
       }
     }
+    // Whatever the evidence file holds: only the explorer can say the vault's source is verified, and only its recorded answer allows it.
+    const rule = vaultShown ? "a claim that the vault is verified must say that the explorer shows it" : "no claim that the vault is verified on the explorer";
+    for (const text of vaultVerifiedClaims(line, vaultShown)) findings.push({ file, line: n, rule, text });
   }
   return findings;
 }

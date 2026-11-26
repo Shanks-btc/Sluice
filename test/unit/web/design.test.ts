@@ -1,8 +1,9 @@
 // The design: every colour lives in one file, every text-on-background pair in use meets WCAG AA in both themes, the two copies of
 // the dark theme agree, and the theme choice is remembered.
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "chai";
+import { safeReaddir } from "../../../src/secret-paths";
 import { MINIMUM, composite, contrastRatio, parseColor, parseTokens, resolveToken } from "../../../apps/web/src/lib/contrast";
 import { FOREGROUND_TOKENS, PAIRS } from "../../../apps/web/src/design/pairs";
 import { THEME_KEY, applyChoice, isChoice, readChoice, resolveTheme, storeChoice, toggled } from "../../../apps/web/src/lib/theme";
@@ -13,7 +14,7 @@ const tokensCss = read("src/design/tokens.css");
 const themes = parseTokens(tokensCss);
 
 function walk(dir: string, accept: (name: string) => boolean): string[] {
-  return readdirSync(join(web, dir)).flatMap((name) => {
+  return safeReaddir(join(web, dir)).flatMap((name) => {
     const rel = `${dir}/${name}`;
     if (name === "node_modules" || name === ".next" || name === "generated") return [];
     return statSync(join(web, rel)).isDirectory() ? walk(rel, accept) : accept(name) ? [rel] : [];

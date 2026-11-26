@@ -8,7 +8,8 @@ export function proxy(request: NextRequest) {
   const nonce = makeNonce();
   // The facilitator the deployer set may be reached from every page; one the person types in only from the demo and wallet pages.
   // The RPC the deployer set (a local node, or another provider) is reachable from every page too.
-  const extra = [originOf(process.env["NEXT_PUBLIC_FACILITATOR_URL"]), originOf(process.env["NEXT_PUBLIC_RPC_URL"])].filter((o): o is string => o !== undefined);
+  // The hosted tool server the live demo and the builder's test call pay is reachable from every page too.
+  const extra = [originOf(process.env["NEXT_PUBLIC_FACILITATOR_URL"]), originOf(process.env["NEXT_PUBLIC_RPC_URL"]), originOf(process.env["NEXT_PUBLIC_TOOLS_URL"])].filter((o): o is string => o !== undefined);
   const csp = buildCsp({ nonce, dev: process.env.NODE_ENV === "development", path: request.nextUrl.pathname, extraConnect: extra });
   const headers = new Headers(request.headers);
   headers.set("x-nonce", nonce);

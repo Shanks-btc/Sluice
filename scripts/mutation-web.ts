@@ -18,8 +18,17 @@ const CONTENT = "test/unit/web/content.test.ts";
 const DESIGN = "test/unit/web/design.test.ts";
 const ROUTES = "test/unit/web/routes.test.ts";
 
+// The live-first slice's tests: the web logic with a mocked wallet and services (fast), the shared operations helpers, and the two services'
+// own request handling against a local chain.
+const LIVE = "test/unit/web/live-logic.test.ts";
+const OPS = "test/unit/ops.test.ts";
+const TOOLS_OPS = "test/unit/examples/tools-ops.test.ts";
+const FAC_OPS = "test/unit/facilitator/service-ops.test.ts";
+
 const W = "apps/web/src";
 const m = (id: string, file: string, find: string, replace: string, why: string, tests: string[]): Mutation => ({ id, file: `${W}/${file}`, find, replace, why, tests });
+/** The same, for a file outside the web app, named from the repository root. */
+const r = (id: string, file: string, find: string, replace: string, why: string, tests: string[]): Mutation => ({ id, file, find, replace, why, tests });
 
 export const WEB_MUTATIONS: Mutation[] = [
   // The status badges: Live only with evidence
@@ -56,6 +65,57 @@ export const WEB_MUTATIONS: Mutation[] = [
   m("X23", "lib/markdown.ts", `if (/^[a-z][a-z0-9+.-]*:/i.test(raw) || raw.startsWith("//")) return undefined;`, `if (false) return undefined;`, "keep a javascript: link", [CONTENT]),
   m("X24", "lib/markdown.ts", `.replace(/</g, "&lt;")`, ``, "leave < unescaped in a document", [CONTENT]),
   m("X25", "lib/contrast.ts", `return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);`, `return (Math.max(la, lb) + 0.05) / (Math.max(la, lb) + 0.05);`, "call every pair of colours the same", [DESIGN]),
+
+  // The live paid call: nothing is signed before a confirm, and a price is checked field by field before it is shown
+  m("Y01", "lib/paid-call.ts", `if (this.current !== "confirmed") throw new NotConfirmedError();`, `if (false) throw new NotConfirmedError();`, "sign a payment that was never confirmed", [LIVE]),
+  m("Y02", "lib/paid-call.ts", `if (this.current !== "planned") throw new Error(\`cannot confirm a payment that is \${this.current}\`);`, `if (false) throw new Error(\`cannot confirm a payment that is \${this.current}\`);`, "confirm a payment that was cancelled or already sent", [LIVE]),
+  m("Y03", "lib/paid-call.ts", `if (this.current === "planned" || this.current === "confirmed") this.current = "cancelled";`, `if (this.current === "planned") this.current = "cancelled";`, "refuse to cancel a payment that was confirmed but not yet signed", [LIVE]),
+  m("Y04", "lib/paid-call.ts", `if (networkState(current, deps.chainId) === "wrong") throw new WalletError("wrong_network", "wrong network");`, `if (false) throw new WalletError("wrong_network", "wrong network");`, "sign a payment while the wallet is on another network", [LIVE]),
+  m("Y05", "lib/paid-call.ts", `if (BigInt(deps.now()) >= intent.deadline) throw new SluiceCallError("sluice_intent_expired"`, `if (false) throw new SluiceCallError("sluice_intent_expired"`, "sign a quote that has run out of time", [LIVE]),
+  m("Y06", "lib/paid-call.ts", `if (prepaid < quote.amount) {`, `if (false) {`, "plan a payment the prepaid balance cannot cover", [LIVE]),
+  m("Y07", "lib/paid-call.ts", `if (result.isError === true) {`, `if (false) {`, "show a refused payment as a paid one", [LIVE]),
+  m("Y08", "lib/paid-call.ts", `if (r.network !== \`eip155:\${deps.chainId}\`) return`, `if (false) return`, "accept a price for another network", [LIVE]),
+  m("Y09", "lib/paid-call.ts", `if (BigInt(r.amount) > BigInt(deps.sessionCapUnits)) return`, `if (false) return`, "accept a price above the page's cap", [LIVE]),
+  m("Y10", "lib/paid-call.ts", `getAddress(r.asset) !== getAddress(deps.reader.tokenAddress)`, `false`, "accept a price in another token", [LIVE]),
+  m("Y11", "lib/paid-call.ts", `getAddress(r.extra.router) !== getAddress(deps.reader.routerAddress)`, `false`, "accept a price that names another router", [LIVE]),
+  m("Y12", "lib/paid-call.ts", `if (r.extra.toolId !== toolIdOf(tool)) return`, `if (false) return`, "accept a price for a different tool", [LIVE]),
+  m("Y13", "lib/paid-call.ts", `getAddress(r.payTo) !== getAddress(server.payee)`, `false`, "accept a payee the tool server did not declare", [LIVE]),
+  m("Y14", "lib/paid-call.ts", `r.maxTimeoutSeconds < 20`, `r.maxTimeoutSeconds < 0`, "accept a price that leaves no time to pay", [LIVE]),
+  m("Y15", "lib/paid-call.ts", `if (info.router !== getAddress(expected.router)) return`, `if (false) return`, "trust a tool server that settles through another router", [LIVE]),
+  m("Y16", "lib/paid-call.ts", `if (info.chainId !== expected.chainId) return`, `if (false) return`, "trust a tool server on another chain", [LIVE]),
+  m("Y17", "lib/paid-call.ts", `BigInt(r.amount) <= 0n)`, `BigInt(r.amount) < 0n)`, "accept a price of nothing", [LIVE]),
+
+  // The deposit cap and what is kept across a reload
+  m("Y18", "lib/live.ts", `if (amount > cap) return`, `if (false) return`, "let one deposit pass the page's cap", [LIVE]),
+  m("Y19", "lib/live.ts", `if (prepaid + amount > cap) {`, `if (false) {`, "let the prepaid balance pass the cap by deposits in turn", [LIVE]),
+  m("Y20", "lib/resume.ts", `if (nowSeconds - rec.createdAt > INFLIGHT_MAX_AGE_SECONDS) continue;`, `if (false) continue;`, "pick up a payment from days ago as if it were in flight", [LIVE]),
+  m("Y21", "lib/resume.ts", `if (payer && rec.payer.toLowerCase() !== payer.toLowerCase()) continue;`, `if (false) continue;`, "show one wallet's payments to another", [LIVE]),
+  m("Y22", "lib/resume.ts", `nowSeconds - r.createdAt <= withinSeconds`, `true`, "warn of a duplicate for any earlier payment of the same tool", [LIVE]),
+  m("Y23", "lib/resume.ts", `if (typeof v.id !== "string" || !ID.test(v.id)) return undefined;`, `if (false) return undefined;`, "keep a saved record whose id is not an intent id", [LIVE]),
+
+  // The activity list and its file
+  m("Y24", "lib/history.ts", `if (size > 100) {`, `if (false) {`, "give up at once when the node refuses a block range", [LIVE]),
+  m("Y25", "lib/history.ts", `windows < maxWindows && rows.size < want`, `windows < maxWindows`, "keep scanning after enough rows were found", [LIVE]),
+  m("Y26", "lib/history.ts", `const reachedStart = low <= floor;`, `const reachedStart = low < floor;`, "say the start was not reached when it was", [LIVE]),
+  m("Y27", "lib/history.ts", `if (/^[=+\\-@\\t\\r]/.test(v)) v =`, `if (false) v =`, "write a cell that a spreadsheet would run as a formula", [LIVE]),
+  m("Y28", "lib/history.ts", `Math.min(Math.max(1, Math.trunc(Number.isFinite(page) ? page : 1)), pages)`, `Math.max(1, Math.trunc(Number.isFinite(page) ? page : 1))`, "let a page number run past the last page", [LIVE]),
+
+  // The status page's verdicts and its route's limit
+  m("Y29", "lib/service-status.ts", `if (!f.chainMatches) problems.push("The facilitator is on a different chain than this site.");`, `if (false) problems.push("The facilitator is on a different chain than this site.");`, "say nothing when the facilitator is on another chain", [LIVE]),
+  m("Y30", "lib/service-status.ts", `if (f.killSwitch) problems.push(`, `if (false) problems.push(`, "hide that the kill switch is on", [LIVE]),
+  m("Y31", "lib/service-status.ts", `if (f.lowBalance) problems.push(`, `if (false) problems.push(`, "hide that the relayer is low on QIE", [LIVE]),
+  m("Y32", "lib/service-status.ts", `if (f.oldestInFlightAgeSeconds > 600) problems.push`, `if (f.oldestInFlightAgeSeconds > 6000) problems.push`, "wait ten times as long before saying a batch is stuck", [LIVE]),
+  m("Y33", "lib/service-status.ts", `if (s.rpc.healthy === 0) {`, `if (false) {`, "say all is well when no QIE endpoint answers", [LIVE]),
+  m("Y34", "lib/service-status.ts", `new RateLimiter({ limit: 30, windowMs: 60_000 })`, `new RateLimiter({ limit: 3000, windowMs: 60_000 })`, "let one caller read the status route a hundred times as often", [LIVE]),
+
+  // The shared operations helpers, and the two services' own doors
+  r("Y35", "packages/sdk/src/ops.ts", `return given.length === wanted.length && timingSafeEqual(given, wanted);`, `return given.length === wanted.length;`, "accept any token of the right length on the private metrics path", [OPS]),
+  r("Y36", "packages/sdk/src/ops.ts", `if (!token || typeof header !== "string") return false;`, `if (typeof header !== "string") return false;`, "open the private path when no token is set", [OPS]),
+  r("Y37", "packages/sdk/src/ops.ts", `{8,64}$/`, `{8,640}$/`, "accept a caller's request id of any length into the logs", [OPS]),
+  r("Y38", "packages/sdk/src/ops.ts", `return path.startsWith("/status/") && known.includes("/status") ? "/status" : "other";`, `return path;`, "let a caller grow the counters by inventing paths", [OPS]),
+  r("Y39", "examples/paid-tools/src/host.ts", `const allowed = origin !== undefined && env.corsOrigins.includes(origin);`, `const allowed = origin !== undefined;`, "let any website read the tool server's answers", [TOOLS_OPS]),
+  r("Y40", "examples/paid-tools/src/host.ts", `if (!bearerMatches(req.headers.authorization, metricsToken)) return reply(res, 401`, `if (false) return reply(res, 401`, "serve the tool server's metrics without the token", [TOOLS_OPS]),
+  r("Y41", "packages/facilitator/src/server.ts", `if (!bearerMatches(req.headers.authorization, options.metricsToken)) return send(res, 401`, `if (false) return send(res, 401`, "serve the facilitator's metrics without the token", [FAC_OPS]),
 ];
 
 function main(): number {

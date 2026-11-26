@@ -9,20 +9,22 @@ import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "chai";
-import { Wallet, getAddress, parseEther } from "ethers";
+import { Wallet, getAddress, parseEther, zeroPadValue } from "ethers";
 import { network } from "hardhat";
 import { HARD_CAPS } from "@sluice/facilitator";
-import { ONBOARD_APPROVE_GAS, ONBOARD_DEPOSIT_GAS, signOnboarding } from "@sluice/sdk";
+import { ONBOARD_APPROVE_GAS, ONBOARD_DEPOSIT_GAS, signOnboarding, signRefund } from "@sluice/sdk";
 import { EVIDENCE_COLUMNS, NetworkError, parseEvidence, parseEvidenceStrict } from "../../src/evidence";
-import type { EvidenceRow } from "../../src/evidence";
+import type { EvidenceRow, Rpc } from "../../src/evidence";
+import { EVENTS } from "../../src/events";
 import {
-  CLAIM_TYPES, RELAYED_START_MAX_TOPUP_WEI, RECORDER_READ_ONLY_METHODS, RecordError, appendRows, checkClaimRow, countByClaim, explorerVerifiedFor,
-  hashCell, parseClaimCell, publicRpcUrls, recorderRpc, renderRow, rowKey, sameCompiledCode, verifyClaim,
+  CLAIM_EVENT, CLAIM_TYPES, RELAYED_START_MAX_TOPUP_WEI, RECORDER_READ_ONLY_METHODS, RecordError, appendRows, checkClaimRow, countByClaim, explorerVerifiedFor,
+  RpcRefused, hashCell, parseClaimCell, publicRpcUrls, recorderRpc, renderRow, rowKey, sameCompiledCode, verifyClaim,
 } from "../../src/recorder";
 import type { ClaimInput, RecordedRow } from "../../src/recorder";
 import { main as recordMain, chooseRpc, parseArgs } from "../../scripts/evidence/record";
 import { main as checkMain } from "../../scripts/evidence-check";
 import { rejection } from "../helpers/assert";
+import { evidenceTemplate } from "../helpers/evidence-template";
 import { USDC } from "../helpers";
 import { makePayment, requirementsFor, verifyBody } from "../helpers/payments";
 import { fundWallet, setQie, startStack, throwawayWallet } from "../helpers/stack";
@@ -86,8 +88,11 @@ describe("Recorder: what it is allowed to do", () => {
     expect(RELAYED_START_MAX_TOPUP_WEI).to.equal(HARD_CAPS.maxTopUpWei);
   });
 
-  it("knows seven claims", () => {
-    expect([...CLAIM_TYPES]).to.deep.equal(["deploy", "verify-link", "settle-batch", "deposit", "relayed-start", "paid-call-settlement", "withdraw"]);
+  it("knows eight claims, and each one's event is one the checker can read back", () => {
+    expect([...CLAIM_TYPES]).to.deep.equal(["deploy", "verify-link", "settle-batch", "deposit", "relayed-start", "paid-call-settlement", "withdraw", "refund"]);
+    expect(CLAIM_EVENT.refund).to.equal("Refunded");
+    expect(EVENTS[CLAIM_EVENT.refund]).to.deep.include({ contract: "router", amountField: "amount", whoField: "payer" });
+    expect(parseClaimCell("refund")).to.deep.equal({ claim: "refund" });
   });
 });
 
@@ -96,12 +101,17 @@ describe("Recorder: the file", () => {
     network: "mainnet", date: "2026-12-01T10:00:00Z", event: "Deposited", hash: `0x${"ab".repeat(32)}`, block: "100", contract: getAddress(`0x${"11".repeat(20)}`),
     amount: "0.300000", who: getAddress(`0x${"22".repeat(20)}`), claim: "deposit", recheck: `pnpm evidence:check --hash 0x${"ab".repeat(32)}`, ...over,
   });
-  const real = () => readFileSync(REAL_FILE, "utf8");
+  // The real file as it was before any row was recorded (LF whatever git's autocrlf did to the checkout). Rows recorded in docs/EVIDENCE.md
+  // since are not what these tests are about, and must not change what they say.
+  const real = () => evidenceTemplate(readFileSync(REAL_FILE, "utf8")).replace(/\r\n/g, "\n");
 
   it("is in the shape the recorder writes: both network tables have the Network, Claim and Re-check columns, and no rows", () => {
     const text = real();
     expect(parseEvidenceStrict(text)).to.deep.equal([]);
     expect(text).to.contain(`| ${[...EVIDENCE_COLUMNS, "Network", "Claim", "Re-check"].join(" | ")} |`);
+    // The real file, with every row recorded in it, still reads strictly: each row is a mainnet or a testnet row in its own table, and none is a fork row.
+    const rows = parseEvidenceStrict(readFileSync(REAL_FILE, "utf8"));
+    expect(rows.every((r) => r.network === "mainnet" || r.network === "testnet")).to.equal(true);
   });
 
   it("renders a mainnet row with an explorer link, the network, the claim and the command that checks it again, and reads it back", () => {
@@ -115,6 +125,15 @@ describe("Recorder: the file", () => {
     const a = real().split("\n");
     const b = out.split("\n");
     expect(b.length).to.equal(a.length + 1);
+  });
+
+  it("keeps a file's CRLF line endings when it adds a row, so a checkout with git's autocrlf gets no mixed endings", () => {
+    const crlf = real().split("\n").join("\r\n");
+    const out = appendRows(crlf, [row({ network: "testnet" })]);
+    expect(out.split("\r\n")).to.have.length(crlf.split("\r\n").length + 1);
+    expect(out.split("\r\n").join("")).to.not.contain("\n"); // every line break is CRLF
+    expect(parseEvidenceStrict(out).map((r) => r.network)).to.deep.equal(["testnet"]);
+    expect(appendRows(real(), [row({ network: "testnet" })])).to.not.contain("\r"); // an LF file stays LF
   });
 
   it("links a testnet row to nothing, since the testnet has no explorer this repository knows", () => {
@@ -232,7 +251,7 @@ describe("Recorder: against a local chain", function () {
     router = s.routerAddress;
     dir = mkdtempSync(join(tmpdir(), "sluice-evidence-"));
     file = join(dir, "EVIDENCE.md");
-    copyFileSync(REAL_FILE, file);
+    writeFileSync(file, evidenceTemplate(readFileSync(REAL_FILE, "utf8")));
     payer = throwawayWallet();
     builder = throwawayWallet();
     lines.length = 0;
@@ -264,6 +283,88 @@ describe("Recorder: against a local chain", function () {
     const hash = ((await tx.wait()) as { hash: string }).hash;
     const { rows } = await claim({ claim: "withdraw", hash });
     expect(rows[0]).to.deep.include({ event: "Withdrawn", amount: "0.200000", who: builder.address, claim: "withdraw" });
+  });
+
+  /** A payer's own refund, sent by the payer, to `to`; returns the transaction's hash. */
+  const refund = async (who: Wallet, amount: bigint, to: string): Promise<string> => {
+    const tx = await (s.router.connect(who.connect(s.provider)) as unknown as { refund: (n: bigint, to: string) => Promise<{ wait: () => Promise<{ hash: string }> }> }).refund(amount, to);
+    return ((await tx.wait()) as { hash: string }).hash;
+  };
+
+  it("accepts a genuine refund: the amount and the payer come from the router's Refunded event, not from where the QUSDC went", async () => {
+    await deposit(payer, USDC("1"));
+    const elsewhere = throwawayWallet().address;
+    const hash = await refund(payer, USDC("0.3"), elsewhere);
+    const { rows, notes } = await claim({ claim: "refund", hash });
+    expect(notes).to.deep.equal([]);
+    expect(rows).to.have.length(1);
+    expect(rows[0]).to.deep.include({ network: "fork", event: "Refunded", hash, contract: getAddress(router), amount: "0.300000", who: payer.address, claim: "refund" });
+    expect(rows[0]?.recheck).to.equal(`pnpm evidence:check --hash ${hash}`);
+    // The claim takes a hash and a router and nothing else about the payment, so an amount or an address given to it changes nothing.
+    const told = await claim({ claim: "refund", hash, amount: "9.000000", who: elsewhere } as unknown as { claim: "refund"; hash: string });
+    expect(told.rows).to.deep.equal(rows);
+  });
+
+  it("accepts a refund a relayer sent for a payer who holds no QIE, and names the payer, not the relayer", async () => {
+    await deposit(payer, USDC("1"));
+    await setQie(payer.address, 0n);
+    const message = { account: payer.address, to: payer.address, amount: USDC("0.4"), nonce: `0x${"5a".repeat(32)}`, deadline: BigInt(s.clock() + 600) };
+    const signature = await signRefund(payer, router, message, 1990);
+    const out = await s.facilitator.relay({ kind: "refund", ...message, amount: message.amount.toString(), deadline: message.deadline.toString(), signature });
+    expect(out.ok, out.detail).to.equal(true);
+    const hash = out.transaction as string;
+    expect((await s.provider.getTransaction(hash))?.from).to.equal(s.relayerAddress);
+    const { rows } = await claim({ claim: "refund", hash });
+    expect(rows).to.have.length(1);
+    expect(rows[0]).to.deep.include({ event: "Refunded", amount: "0.400000", who: payer.address, claim: "refund" });
+  });
+
+  it("refuses as a refund anything that is not one: a deposit, a withdrawal, a failed refund, and an event from another contract", async () => {
+    const deposited = await deposit(payer, USDC("1"));
+    await refused({ claim: "refund", hash: deposited }, /no Refunded event/);
+    const hash = await refund(payer, USDC("0.2"), payer.address);
+    await refused({ claim: "withdraw", hash }, /no Withdrawn event/);
+    await refused({ claim: "deposit", hash }, /no Deposited event/);
+    await refused({ claim: "paid-call-settlement", hash }, /no Settled event/);
+    // The same receipt, with the router's log said to come from another address: it is not the router's refund.
+    const real = rpc();
+    const other = throwawayWallet().address;
+    const moved: Rpc = async (m, p) => {
+      const answer = await real(m, p);
+      if (m !== "eth_getTransactionReceipt") return answer;
+      const receipt = answer as { logs: Array<{ address: string }> };
+      return { ...receipt, logs: receipt.logs.map((l) => (l.address.toLowerCase() === router.toLowerCase() ? { ...l, address: other } : l)) };
+    };
+    expect((await rejection(verifyClaim({ claim: "refund", network: "fork", hash, router }, { rpc: moved }))).message).to.match(/no Refunded event from the router/);
+    await refused({ claim: "refund", hash, router: s.tokenAddress }, /does not answer like a Sluice router/);
+    await refused({ claim: "refund", hash, router: undefined as unknown as string }, /needs the router's address/);
+    // More than the payer has: the router reverts, and a failed transaction shows nothing.
+    await network.provider.send("evm_setAutomine", [false]);
+    const failing = await (s.router.connect(payer.connect(s.provider)) as unknown as { refund: (n: bigint, to: string, o: object) => Promise<{ hash: string }> }).refund(USDC("50"), payer.address, { gasLimit: 300_000 });
+    await network.provider.send("evm_mine", []);
+    await network.provider.send("evm_setAutomine", [true]);
+    expect((await s.provider.getTransactionReceipt(failing.hash))?.status).to.equal(0);
+    await refused({ claim: "refund", hash: failing.hash }, /transaction failed/);
+  });
+
+  it("records a refund with the command, refuses it a second time, and passes it when it is checked again", async () => {
+    await deposit(payer, USDC("1"));
+    const hash = await refund(payer, USDC("0.25"), payer.address);
+    expect(await record(["--claim", "refund", "--tx", hash])).to.equal(0);
+    expect(lines.join("\n")).to.contain("recorded 1 row for the refund claim on fork");
+    const once = readFileSync(file, "utf8");
+    expect(once).to.contain(`| Refunded | ${hash} |`);
+    expect(once).to.contain(`| 0.250000 | ${payer.address} | fork | refund |`);
+    lines.length = 0;
+    expect(await record(["--claim", "refund", "--tx", hash])).to.equal(1);
+    expect(lines.join("\n")).to.contain("already in the evidence file");
+    expect(readFileSync(file, "utf8")).to.equal(once);
+    const row = (await claim({ claim: "refund", hash })).rows[0] as unknown as EvidenceRow;
+    const deps = { rpc: rpc() };
+    expect((await checkClaimRow(row, deps)).status).to.equal("PASS");
+    for (const changed of [{ amount: "0.250001" }, { who: throwawayWallet().address }, { event: "Withdrawn" }, { claim: "withdraw" }]) {
+      expect((await checkClaimRow({ ...row, ...changed }, deps)).status, JSON.stringify(changed)).to.equal("FAIL");
+    }
   });
 
   it("accepts a genuine facilitator batch: one row per settled intent, and the batch's size from the router's own events", async () => {
@@ -356,10 +457,37 @@ describe("Recorder: against a local chain", function () {
     const { rows, notes } = await claim({ claim: "deploy", hash, router: undefined });
     expect(rows[0]).to.deep.include({ event: "Deployed", contract: getAddress(router), amount: "—", claim: "deploy" });
     expect(notes[0]).to.match(/compiled router's length and metadata hash/);
+    // The vault the router created is looked at, and the row is honest about what it cannot say of it.
+    const vault = getAddress((await s.router.vault()) as string);
+    expect(notes[1]).to.contain(`the router's vault ${vault} has code and names this router as its router`);
+    expect(notes[1]).to.contain("The router's constructor created it, so it has no deployment of its own");
+    expect(notes[1]).to.not.match(/explorer/i); // a deploy claim asks the explorer nothing, so its notes say nothing about it
+    expect(notes[1]).to.contain("pnpm live:vaultcheck");
     // It must be a deployment, and of the router.
     await refused({ claim: "deploy", hash: await deposit(payer, USDC("0.1")), router: undefined }, /did not create a contract/);
     const token = (s.token as unknown as { deploymentTransaction: () => { hash: string } | null }).deploymentTransaction()?.hash as string;
     await refused({ claim: "deploy", hash: token, router: undefined }, /does not answer like a Sluice router/);
+  });
+
+  it("refuses a deployment whose vault has no code, names another router, or is not named by the router, and says which", async () => {
+    const hash = (s.router as unknown as { deploymentTransaction: () => { hash: string } | null }).deploymentTransaction()?.hash as string;
+    const real = rpc();
+    const vault = getAddress((await s.router.vault()) as string);
+    const to = (p: unknown[]): string => String((p[0] as { to?: string }).to).toLowerCase();
+    const noCode: Rpc = async (m, p) => (m === "eth_getCode" && String(p[0]).toLowerCase() === vault.toLowerCase() ? "0x" : real(m, p));
+    const another: Rpc = async (m, p) => (m === "eth_call" && to(p) === vault.toLowerCase() ? zeroPadValue(getAddress(`0x${"ab".repeat(20)}`), 32) : real(m, p));
+    const notNamed: Rpc = async (m, p) => (m === "eth_call" && to(p) === router.toLowerCase() && String((p[0] as { data: string }).data).startsWith("0xfbfa77cf") ? "0x" : real(m, p));
+    const refusing: Rpc = async (m, p) => {
+      if (m === "eth_call" && to(p) === router.toLowerCase() && String((p[0] as { data: string }).data).startsWith("0xfbfa77cf")) throw new RpcRefused("no");
+      return real(m, p);
+    };
+    const why = async (r: Rpc): Promise<string> => (await rejection(verifyClaim({ claim: "deploy", network: "fork", hash }, { rpc: r }))).message;
+    expect(await why(noCode)).to.match(/there is no code at the router's vault address/);
+    expect(await why(another)).to.match(/the router's vault names another router/);
+    expect(await why(notNamed)).to.match(/the router does not name a vault/);
+    expect(await why(refusing)).to.match(/the router's vault could not be read/);
+    // The honest case still passes with the same reader.
+    expect((await verifyClaim({ claim: "deploy", network: "fork", hash }, { rpc: real })).rows).to.have.length(1);
   });
 
   it("compares deployed code with compiled code by length and metadata hash, which immutable values do not change", () => {
@@ -378,8 +506,12 @@ describe("Recorder: against a local chain", function () {
     const yes = await verifyClaim({ claim: "verify-link", network: "fork", hash }, { rpc: rpc(), explorerVerified: async (a) => { asked.push(a); return true; } });
     expect(yes.rows[0]).to.deep.include({ event: "SourceVerified", contract: getAddress(router), hash, claim: "verify-link", amount: "—" });
     expect(asked).to.deep.equal([getAddress(router)]);
+    // The row is for the router, which is the contract the deployment created, and says nothing about the vault: the explorer is never asked about it.
+    expect(yes.notes.join(" ")).to.contain("shows verified source for the router, which is the contract this deployment created");
+    expect(yes.notes.join(" ")).to.contain("says nothing about the vault");
+    expect(asked.map((a) => a.toLowerCase())).to.not.include(String(await s.router.vault()).toLowerCase());
     const error = await rejection(verifyClaim({ claim: "verify-link", network: "fork", hash }, { rpc: rpc(), explorerVerified: async () => false }));
-    expect(error.message).to.match(/does not show verified source/);
+    expect(error.message).to.match(/does not show verified source for this contract \(the router\)/);
   });
 
   describe("refuses what the chain does not show, and writes nothing", () => {
@@ -436,8 +568,10 @@ describe("Recorder: against a local chain", function () {
       const text = readFileSync(file, "utf8");
       expect(text).to.contain("## Fork (a local copy of QIE mainnet; never counted)");
       expect(text).to.contain("| fork | deposit |");
-      // The real evidence file is not the file it wrote to, and has no row.
-      expect(parseEvidenceStrict(readFileSync(REAL_FILE, "utf8"))).to.deep.equal([]);
+      // The real evidence file is not the file it wrote to: it holds no fork row and no Fork section.
+      const realText = readFileSync(REAL_FILE, "utf8");
+      expect(parseEvidenceStrict(realText).filter((r) => (r.network as string) === "fork")).to.deep.equal([]);
+      expect(realText).to.not.contain("## Fork");
     });
 
     it("writes nothing when the claim does not hold: the file is byte for byte what it was", async () => {
@@ -552,7 +686,7 @@ describe("Recorder: against a local chain", function () {
     });
 
     it("pnpm evidence:check --hash checks the rows for one transaction, and says when none has it", async () => {
-      const text = readFileSync(REAL_FILE, "utf8");
+      const text = evidenceTemplate(readFileSync(REAL_FILE, "utf8"));
       const evidence = join(dir, "check.md");
       writeFileSync(evidence, text);
       const out: string[] = [];

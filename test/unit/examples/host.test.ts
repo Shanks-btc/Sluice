@@ -273,7 +273,9 @@ describe("The hosted tool server", function () {
       const started = Date.now();
       const error = await rejection(createToolServer({ env: envFor({ rpcUrl: `http://127.0.0.1:${port}`, rpcTimeoutMs: 600 }) }));
       expect(error).to.be.instanceOf(ToolServerEnvError);
-      expect(error.message).to.equal("refusing to start: the router could not be read at SLUICE_ROUTER on that network");
+      // The chain is asked for first (requireNodeChain), so a node that never answers is refused there, with a fixed message that holds no URL.
+      expect(error.message).to.equal("refusing to start: the RPC did not answer eth_chainId, so its chain could not be checked: local is chain 1990");
+      expect(error.message).to.not.contain("127.0.0.1");
       expect(Date.now() - started).to.be.lessThan(15_000);
     } finally {
       silent.closeAllConnections();

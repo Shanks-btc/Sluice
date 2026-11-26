@@ -610,10 +610,22 @@ main {
   }
 }
 
+/* A disclosure that holds long prose. It is not a grid: the browser puts a details element's content in a box a grid cannot shrink, so
+   one wide table in it would widen the whole page on a phone. */
+.disclosure > summary {
+  margin-bottom: 16px;
+}
+
 /* Wallet bar, flows and dashboards */
 .wallet-line {
   align-items: center;
   gap: 12px;
+}
+/* The network's name and the account can be long (a local node's label is), so on a phone the badge wraps instead of widening the page. */
+.wallet-line > .tag {
+  white-space: normal;
+  max-width: 100%;
+  line-height: 1.5;
 }
 .wrong-network {
   margin-top: 14px;
@@ -736,6 +748,17 @@ main {
   to {
     opacity: 1;
     transform: none;
+  }
+}
+
+/* The terms and the privacy notice have no page header of their own, so they start below the floating navigation, as the documents do. */
+.legal {
+  padding-top: 132px;
+  padding-bottom: 96px;
+}
+@media (max-width: 1099px) {
+  .legal {
+    padding-top: 112px;
   }
 }
 
@@ -862,7 +885,7 @@ main {
 }
 .fcols {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 24px;
 }
 .fcols h2 {

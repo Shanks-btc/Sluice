@@ -38,8 +38,10 @@ Everything comes from the environment. Names are also in [.env.example](../.env.
 | `SLUICE_EXPLORER_URL` | no | the default | The explorer's read API, for `contract_lookup` and `token_risk_check`. |
 | `SLUICE_TOOLS_PRICES` | no | the defaults | Prices in QUSDC, like `token_risk_check=0.01,dex_quote=0.002,contract_lookup=0.005`. A name that is not a tool, or a price that is not above zero with at most six decimals, stops the start. |
 | `SLUICE_TOOLS_HOST` | no | `0.0.0.0` in a container | The address to listen on. Default `127.0.0.1`. |
-| `SLUICE_TOOLS_PORT` | no | `8403` | The port. |
+| `SLUICE_TOOLS_PORT` | no | `8403` | The port. The image listens on the platform's `PORT` instead when the platform sets one (Railway does). |
 | `SLUICE_TOOLS_TRUST_PROXY_HOPS` | no | `1` behind one proxy | How many proxies in front append to `X-Forwarded-For`. At 0 the header is ignored, because anyone can send one. |
+| `SLUICE_TOOLS_CORS_ORIGINS` | no | your web app's origin | Exact origins allowed to read answers from a browser, which the live demo and the builder's test call need. Empty allows none. Never a wildcard. |
+| `SLUICE_TOOLS_METRICS_TOKEN` | no | a random value of 24 or more characters | Secret. Turns on `GET /internal/metrics`, which needs `Authorization: Bearer <this value>`. With none set, that path does not exist. See [OPERATIONS.md](OPERATIONS.md). |
 | `SLUICE_TOOLS_MAX_BODY_BYTES` | no | `32768` | The largest request body. At most 1048576. |
 | `SLUICE_TOOLS_RATE_LIMIT_IP` | no | `300` | Requests a minute from one address. |
 | `SLUICE_TOOLS_RATE_LIMIT_UNPAID` | no | `60` | Requests a minute from one address that carry no payment. |
@@ -106,12 +108,13 @@ These are Linux commands for a small server you control. Replace the angle-brack
 
 ## Option B: Railway
 
-These describe what to set. Railway's screens change, so follow its current documentation for where each setting lives.
+[HOSTING-RAILWAY.md](HOSTING-RAILWAY.md) has the click-by-click steps and the exact list of variables. In short:
 
-1. Create a service from this repository using the Dockerfile at `examples/paid-tools/Dockerfile`, with the repository root as the build context.
-2. Add the settings above as the service's variables. Set `SLUICE_TOOLS_PORT` to the port the service is told to expose.
+1. Create a service from this repository, with the repository root as the build context and `RAILWAY_DOCKERFILE_PATH` set to `/examples/paid-tools/Dockerfile`. It needs no volume: it writes no file.
+2. Add the settings above as the service's variables. The image listens on the `PORT` Railway gives it, so leave `SLUICE_TOOLS_PORT` alone. `SLUICE_FACILITATOR_URL` must be the facilitator's public https address: Railway's private network is plain http, which the tool server refuses.
 3. Set the health check path to `/health`.
-4. Give the service a domain. Leave `SLUICE_TOOLS_TRUST_PROXY_HOPS` at 0 unless Railway's documentation tells you how many proxies it puts in front; at 0, every caller shares one rate limit.
+4. Give the service a domain. Set `SLUICE_TOOLS_TRUST_PROXY_HOPS` to 1 (HOSTING-RAILWAY.md says why, and what is unverified).
+5. Run `pnpm live:hostcheck` to check it from outside.
 
 ## Pointing a proxy at it
 

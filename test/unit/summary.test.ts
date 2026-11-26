@@ -5,8 +5,10 @@ import { join } from "node:path";
 import { expect } from "chai";
 import { Wallet, getAddress, id, parseEther } from "ethers";
 import {
-  FOUNDER_LIST_PATH, FounderListError, SUMMARY_READ_ONLY_METHODS, formatSummary, parseFounderList, scanSettled, summarize, summaryRpc,
+  FOUNDER_LIST_PATH, FounderListError, SUMMARY_READ_ONLY_METHODS, formatSummary, founderAddresses, ownRowCount, parseFounderList, scanSettled, summarize, summaryRpc,
 } from "../../src/summary";
+import { parseEvidenceStrict } from "../../src/evidence";
+import { countByClaim } from "../../src/recorder";
 import type { FounderList, SettledEvent } from "../../src/summary";
 import { main } from "../../scripts/evidence-summary";
 import { USDC } from "../helpers";
@@ -62,11 +64,80 @@ describe("Summary: the founder list", () => {
     });
   }
 
+  const repo = (path: string) => readFileSync(join(__dirname, "..", "..", path), "utf8");
+  const publishedRaw = () => JSON.parse(repo(FOUNDER_LIST_PATH)) as FounderList;
+
   it("the published list in docs/ is valid, versioned, and has a label for every wallet", () => {
-    const published = parseFounderList(JSON.parse(readFileSync(join(__dirname, "..", "..", FOUNDER_LIST_PATH), "utf8")));
+    const published = parseFounderList(publishedRaw());
     expect(published.version).to.be.greaterThan(0);
     expect(published.history.at(-1)!.version).to.equal(published.version);
     for (const w of published.wallets) expect(w.label.length).to.be.greaterThan(0);
+    // Written in the file in checksum form, as read: the parser would accept any case, so this is checked on the file itself.
+    for (const w of publishedRaw().wallets) expect(w.address).to.equal(getAddress(w.address.toLowerCase()));
+    // The history only goes up, one entry for each version, and the list's date is its last change's.
+    expect(published.history.map((h) => h.version)).to.deep.equal(published.history.map((_, i) => i + 1));
+    expect(published.updated).to.equal(published.history.at(-1)!.date);
+  });
+
+  it("holds the six wallets of the mainnet deployment and the local mainnet run, each with a label that says what it is", () => {
+    const published = parseFounderList(publishedRaw());
+    expect(published.version).to.equal(2);
+    expect(Object.fromEntries(published.wallets.map((w) => [w.address, w.label.split(":")[0]]))).to.deep.equal({
+      "0x539e8616E5D1DD6C5b4F46055242eEF111209b70": "Deployer",
+      "0x0A021bC732325C57E0cC838E4111A861b84fFEB1": "Relayer",
+      "0x77804b94128cC803C544B9180B03C09F2482DF36": "Owner",
+      "0xd76891452555aE4Df9783889F5bF0d7D0b2146D4": "Fee recipient",
+      "0xef20188F9AB8E4eAF35E0b65C1386981F5aC039C": "Payer",
+      "0x56fe374A5B45E22040D9EB0bF93D55Fd15B3831E": "Builder (payee)",
+    });
+    // The addresses are the ones the repository's own records name for those roles.
+    const guide = repo("docs/LOCAL-MAINNET-RUN.md");
+    expect(guide).to.contain("| Payer | `0xef20188F9AB8E4eAF35E0b65C1386981F5aC039C`");
+    expect(guide).to.contain("| Builder (the payee) | `0x56fe374A5B45E22040D9EB0bF93D55Fd15B3831E`");
+    expect(guide).to.contain("| Relayer | `0x0A021bC732325C57E0cC838E4111A861b84fFEB1`");
+    expect(repo("docs/EVIDENCE.md")).to.contain("| 0x539e8616E5D1DD6C5b4F46055242eEF111209b70 | mainnet | deploy |");
+  });
+
+  it("leaves the two settlements made on mainnet so far, and everything the local run would pay, out of the paid-call counts", () => {
+    const published = parseFounderList(publishedRaw());
+    const deployer = "0x539e8616E5D1DD6C5b4F46055242eEF111209b70";
+    const [payer, builder] = ["0xef20188F9AB8E4eAF35E0b65C1386981F5aC039C", "0x56fe374A5B45E22040D9EB0bF93D55Fd15B3831E"];
+    const stranger = addr(0x5151);
+    // As read from the router's events: blocks 12119315 (signed by the payer) and 12119319 (signed by an agent key that is not listed).
+    const soFar = [event(deployer, deployer, 100_000n), event(deployer, deployer, 50_000n, "0x16c311EfA2b9f426b8b62c8cfeD31259Ac2447A5")];
+    expect(summarize(soFar, published)).to.include({ settledEvents: 2, excluded: 2, paidCalls: 0, distinctPayers: 0, distinctBuilders: 0, amountUnits: 0n });
+    const local = [event(payer, builder, 2_000n), event(payer, builder, 5_000n, stranger), event(payer, builder, 10_000n)];
+    expect(summarize(local, published)).to.include({ excluded: 3, paidCalls: 0 });
+    // Each role on its own is enough: a stranger paying a listed builder, and a listed wallet paying a stranger's tool.
+    expect(summarize([event(stranger, builder, 1n), event(payer, stranger, 1n)], published)).to.include({ excluded: 2, paidCalls: 0 });
+    expect(summarize([event(stranger, addr(0x6262), 7n)], published)).to.include({ excluded: 0, paidCalls: 1, amountUnits: 7n });
+  });
+
+  it("counts every mainnet row recorded so far as the project's own, so the recorded counts show no other address", () => {
+    const published = parseFounderList(publishedRaw());
+    const rows = parseEvidenceStrict(repo("docs/EVIDENCE.md"));
+    const mainnet = rows.filter((r) => r.network === "mainnet");
+    const founders = founderAddresses(published);
+    expect(ownRowCount(rows, "mainnet", founders)).to.equal(mainnet.filter((r) => founders.has(r.who.toLowerCase())).length);
+    // The first four rows were the deployment's. A later row from someone else would be counted, so this looks at those four.
+    const early = mainnet.filter((r) => BigInt(r.block) <= 12_119_323n);
+    expect(early).to.have.length(4);
+    for (const counts of countByClaim(early, founders)) expect(counts, counts.claim).to.include({ rows: 0, distinct: 0 });
+    expect(countByClaim(early, founders).reduce((n, c) => n + c.excluded, 0)).to.equal(4);
+    expect(countByClaim(early, new Set()).reduce((n, c) => n + c.rows, 0), "with no list they were all counted").to.equal(4);
+  });
+
+  it("is what pnpm evidence:summary prints for the recorded rows", async () => {
+    const lines: string[] = [];
+    expect(await main({}, (l) => lines.push(l))).to.equal(0);
+    const out = lines.join("\n");
+    expect(out).to.contain("founder list version 2");
+    // Worked out from the file as it is today, so a row recorded later changes the expectation with it.
+    const counted = countByClaim(parseEvidenceStrict(repo("docs/EVIDENCE.md")), founderAddresses(parseFounderList(publishedRaw())));
+    expect(counted.reduce((n, c) => n + c.excluded, 0), "the list leaves at least the deployment's rows out").to.be.at.least(4);
+    for (const c of counted.filter((x) => x.rows > 0 || x.excluded > 0)) {
+      expect(out, c.claim).to.match(new RegExp(`  ${c.claim} +rows ${c.rows}, distinct addresses ${c.distinct}${c.excluded ? `, left out as founder wallets ${c.excluded}` : ""}\\n?`));
+    }
   });
 });
 
@@ -180,7 +251,8 @@ describe("Summary: the script, against a local chain with real settlements", fun
       expect(await s.facilitator.flush()).to.include({ settled: 6 });
 
       const published = JSON.parse(readFileSync(join(__dirname, "..", "..", FOUNDER_LIST_PATH), "utf8")) as FounderList;
-      const withFounder = JSON.stringify({ ...published, version: 2, wallets: [{ address: founder.address, label: "test founder" }], history: [...published.history, { version: 2, date: "2026-11-19", note: "test" }] });
+      const next = published.version + 1;
+      const withFounder = JSON.stringify({ ...published, version: next, wallets: [{ address: founder.address, label: "test founder" }], history: [...published.history, { version: next, date: "2026-11-19", note: "test" }] });
       const lines: string[] = [];
       const env = { SLUICE_ROUTER: s.routerAddress, SLUICE_FROM_BLOCK: "0", EVIDENCE_RPC_URL: s.rpcUrl };
       expect(await main(env, (l) => lines.push(l), undefined, withFounder)).to.equal(0);
@@ -190,10 +262,10 @@ describe("Summary: the script, against a local chain with real settlements", fun
       expect(out).to.contain("paid calls counted: 4");
       expect(out).to.contain("distinct payers: 2");
       expect(out).to.contain("distinct builders: 2");
-      expect(out).to.contain("founder list version 2 (1 wallet)");
+      expect(out).to.contain(`founder list version ${next} (1 wallet)`);
       expect(out).to.contain("QUSDC paid in counted calls: 0.040000");
 
-      // The published list, as it is in the repository, leaves nobody out.
+      // The published list, as it is in the repository, holds none of these throwaway wallets, so it leaves none of them out.
       const unfiltered: string[] = [];
       await main(env, (l) => unfiltered.push(l));
       expect(unfiltered.join("\n")).to.contain("paid calls counted: 6");

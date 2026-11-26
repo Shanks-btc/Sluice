@@ -34,12 +34,22 @@
     "web:start": "pnpm --filter @sluice/web run start",
     "evidence:record": "ts-node scripts/evidence/record.ts",
     "live:preflight": "ts-node scripts/live/preflight.ts",
+    "live:facts": "ts-node scripts/live/facts.ts",
+    "live:funding": "ts-node scripts/live/funding.ts",
+    "live:golive:plan": "ts-node scripts/live/golive-plan.ts",
+    "live:hostcheck": "ts-node scripts/live/hostcheck.ts",
+    "live:vaultcheck": "ts-node scripts/live/vaultcheck.ts",
+    "live:wire": "ts-node scripts/live/wire.ts",
+    "mainnet:dryrun": "cross-env FORK=1 hardhat run scripts/mainnet-dryrun.ts --no-compile",
     "live:verify": "ts-node scripts/live/verify-contracts.ts",
     "live:test-token": "ts-node scripts/live/deploy-test-token.ts",
     "live:new-key": "ts-node scripts/live/new-key.ts",
     "client:smoke": "ts-node -r tsconfig-paths/register scripts/client/smoke-client.ts",
     "client:owner": "ts-node -r tsconfig-paths/register scripts/client/owner-setup.ts",
-    "mutation:live": "ts-node -r tsconfig-paths/register scripts/mutation-live.ts"
+    "client:call": "ts-node -r tsconfig-paths/register scripts/client/paid-call.ts",
+    "live:balances": "ts-node -r tsconfig-paths/register scripts/live/balances.ts",
+    "mutation:live": "ts-node -r tsconfig-paths/register scripts/mutation-live.ts",
+    "rehearsal:testnet": "ts-node -r tsconfig-paths/register scripts/rehearsal/testnet.ts"
   },
   "dependencies": {
     "ethers": "6.8.1"

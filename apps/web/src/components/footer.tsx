@@ -10,7 +10,7 @@ const COLUMNS: ReadonlyArray<{ heading: string; links: readonly FooterLink[] }> 
     heading: "Product",
     links: [
       ["/#how", "How it works"],
-      ["/demo", "Simulated demo"],
+      ["/demo", "Demo"],
       ["/builder", "For builders"],
       ["/wallet", "Wallet and budgets"],
     ],
@@ -25,6 +25,15 @@ const COLUMNS: ReadonlyArray<{ heading: string; links: readonly FooterLink[] }> 
     ],
   },
   {
+    heading: "Trust",
+    links: [
+      ["/security", "Security and limits"],
+      ["/status", "Status"],
+      ["/terms", "Terms"],
+      ["/privacy", "Privacy"],
+    ],
+  },
+  {
     heading: "Project",
     links: [
       ["/docs", "All documents"],
@@ -34,7 +43,8 @@ const COLUMNS: ReadonlyArray<{ heading: string; links: readonly FooterLink[] }> 
   },
 ];
 
-export function Footer({ repoUrl }: { repoUrl: string | null }) {
+/** `deployed` is whether the evidence file holds a mainnet `Deployed` row: the footer's line about the chain follows it. */
+export function Footer({ repoUrl, deployed }: { repoUrl: string | null; deployed: boolean }) {
   const year = new Date().getUTCFullYear();
   return (
     <footer className="footer">
@@ -44,9 +54,12 @@ export function Footer({ repoUrl }: { repoUrl: string | null }) {
             <Link href="/" aria-label="Sluice, home">
               <Wordmark />
             </Link>
-            <p>Payment middleware for MCP tools, on QIE, in QUSDC. Not deployed to a QIE network yet.</p>
+            <p>
+              Payment middleware for MCP tools, on QIE, in QUSDC.{" "}
+              {deployed ? "The contracts are on QIE mainnet: the evidence page lists what is recorded there." : "Not deployed to a QIE network yet."}
+            </p>
             <Link className="btn btn-sm btn-footer" href="/demo">
-              Try the simulated demo
+              Try the demo
             </Link>
           </div>
           <div className="fcols">

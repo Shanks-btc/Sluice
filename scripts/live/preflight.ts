@@ -14,14 +14,17 @@
 //   --explorer    the explorer to check for a reply (default https://mainnet.qie.digital on mainnet)
 //
 // Exit code 0: GO. 1: NO-GO, or a wrong command. 2: the chain could not be read at all.
+import { exitWith } from "../../src/exit";
 import { existsSync, readFileSync } from "node:fs";
 import { Wallet, getAddress } from "ethers";
 import { NETWORKS } from "../../src/evidence";
 import type { Network } from "../../src/evidence";
-import { formatPreflight, preflight } from "../../src/preflight";
+import { formatPreflight, preflight, qusdcRolesCheck } from "../../src/preflight";
 import type { PreflightInput } from "../../src/preflight";
 import { parseAmount } from "../../src/guard";
 import { publicRpcUrls } from "../../src/recorder";
+import { chooseRpc } from "../../src/rpc-use";
+import { NoHealthyEndpoint, describeSelection } from "@sluice/sdk";
 
 export type Env = Record<string, string | undefined>;
 export type PreflightIo = { log?: (line: string) => void; fetchImpl?: typeof fetch; cwd?: string };
@@ -70,7 +73,22 @@ export async function main(argv: string[], env: Env = process.env, io: Preflight
     const relayer = given("--relayer", args.relayer) ?? addressOf(env.SLUICE_RELAYER_KEY);
 
     const rpcOverride = env.SLUICE_RPC_URL?.trim();
-    const rpcUrls = rpcOverride ? [rpcOverride] : publicRpcUrls(network as Network);
+    // QIE's endpoints are probed first (one eth_chainId each, with a short limit), the chosen one is named, and the check below then reads
+    // through that one with the others as fallbacks. A named endpoint (SLUICE_RPC_URL) is used as given.
+    let rpcUrls: string[] = rpcOverride ? [rpcOverride] : publicRpcUrls(network as Network);
+    if (!rpcOverride) {
+      try {
+        const chosen = await chooseRpc(network as Network, undefined, log, { fetchImpl: io.fetchImpl });
+        rpcUrls = [chosen.url, ...rpcUrls.filter((u) => u !== chosen.url)];
+      } catch (err) {
+        if (!(err instanceof NoHealthyEndpoint)) throw err;
+        log(`pre-flight on ${network}: ${err.message}`);
+        log("NO-GO: no RPC endpoint can be read, so nothing could be checked");
+        return 2;
+      }
+    } else {
+      log(describeSelection({ url: rpcOverride, fallbacks: [], probes: [], overridden: true }));
+    }
     for (const url of rpcUrls) if (!url.startsWith("https://") && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/.test(url)) throw new UsageError("SLUICE_RPC_URL must be https");
 
     const file = args.deployment ?? (existsSync(`${io.cwd ?? "."}/deployment.json`) ? `${io.cwd ?? "."}/deployment.json` : undefined);
@@ -99,6 +117,7 @@ export async function main(argv: string[], env: Env = process.env, io: Preflight
     const fetchImpl = io.fetchImpl ?? fetch;
     const result = await preflight(input, {
       fetchImpl,
+      qusdcRoles: qusdcRolesCheck,
       ...(explorer
         ? {
             explorerReachable: async () => {
@@ -124,10 +143,10 @@ export async function main(argv: string[], env: Env = process.env, io: Preflight
 
 if (require.main === module) {
   main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+    (code) => exitWith(code),
     () => {
       console.error("live:preflight failed");
-      process.exit(1);
+      exitWith(1);
     },
   );
 }

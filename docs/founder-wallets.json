@@ -1,9 +1,17 @@
 {
-  "version": 1,
-  "updated": "2026-11-19",
-  "description": "Wallets that belong to the founder, left out of the paid-call counts in `pnpm evidence:summary`. A payment where one of these is the payer, the payee or the signing key is not counted. The list is empty until the founder adds their wallets; nothing is guessed. Change it only by adding a new history entry with a higher version.",
-  "wallets": [],
+  "version": 2,
+  "updated": "2026-11-26",
+  "description": "Wallets that belong to the founder. A payment where one of these is the payer, the payee or the signing key is not counted by `pnpm evidence:summary` or on the web app's evidence page, and a row of docs/EVIDENCE.md whose Who address is listed here is counted as the project's own. Change it only by adding a new history entry with a higher version.",
+  "wallets": [
+    { "address": "0x539e8616E5D1DD6C5b4F46055242eEF111209b70", "label": "Deployer: sent the mainnet router's deployment, and is the payer and the payee of the settlements in blocks 12119315 and 12119319" },
+    { "address": "0x0A021bC732325C57E0cC838E4111A861b84fFEB1", "label": "Relayer: the address made for the mainnet facilitator, which pays gas" },
+    { "address": "0x77804b94128cC803C544B9180B03C09F2482DF36", "label": "Owner: the mainnet router's owner" },
+    { "address": "0xd76891452555aE4Df9783889F5bF0d7D0b2146D4", "label": "Fee recipient: the address the mainnet router credits its fee to" },
+    { "address": "0xef20188F9AB8E4eAF35E0b65C1386981F5aC039C", "label": "Payer: the paying wallet of the local mainnet run (docs/LOCAL-MAINNET-RUN.md)" },
+    { "address": "0x56fe374A5B45E22040D9EB0bF93D55Fd15B3831E", "label": "Builder (payee): the paid wallet of the local mainnet run (docs/LOCAL-MAINNET-RUN.md)" }
+  ],
   "history": [
-    { "version": 1, "date": "2026-11-19", "note": "Created empty. The founder adds their own wallets, with a label each, and raises the version." }
+    { "version": 1, "date": "2026-11-19", "note": "Created empty. The founder adds their own wallets, with a label each, and raises the version." },
+    { "version": 2, "date": "2026-11-26", "note": "Added six wallets: the mainnet deployer, relayer, owner and fee recipient, and the payer and the builder of the local mainnet run." }
   ]
 }

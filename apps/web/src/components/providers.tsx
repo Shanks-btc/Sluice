@@ -5,10 +5,12 @@
 // approves it in the wallet. The app holds an account address and a chain id, and never a key.
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { JsonRpcProvider, Network } from "ethers";
+import { Network } from "ethers";
+import { FailoverJsonRpcProvider } from "@sluice/sdk/timeout";
 import type { AppConfig } from "../lib/config";
 import { classifyWalletError, connectWallet, describeWalletError, findInjectedWallet, hexToNumber, networkState, readChainId, switchChain } from "../lib/eip1193";
 import type { Eip1193Provider, NetworkState } from "../lib/eip1193";
+import { readEndpoints } from "../lib/rpc-endpoints";
 import { openReader } from "../lib/reads";
 import type { ChainReader } from "../lib/reads";
 
@@ -29,6 +31,10 @@ export function useConfig(): AppConfig {
 // --------------------------------------------------------------------------------------------------- wallet
 
 export type WalletStatus = "unavailable" | "idle" | "connecting" | "connected";
+
+/** How long the page waits for a wallet that is put on the page late: six looks, half a second apart. */
+const WALLET_LOOK_MS = 500;
+const WALLET_LOOK_TRIES = 6;
 
 export type WalletApi = {
   status: WalletStatus;
@@ -52,37 +58,69 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const found = findInjectedWallet(window as unknown as { ethereum?: unknown });
-    if (!found) {
-      setStatus("unavailable");
-      return;
+    const win = window as unknown as { ethereum?: unknown };
+    let detach: (() => void) | undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let tries = 0;
+    const attach = (found: Eip1193Provider) => {
+      setProvider(found);
+      setStatus((s) => (s === "unavailable" ? "idle" : s));
+      const onAccounts = (accounts: unknown) => {
+        const first = Array.isArray(accounts) ? accounts[0] : undefined;
+        if (typeof first === "string") setAccount(first);
+        else {
+          setAccount(null);
+          setStatus("idle");
+        }
+      };
+      const onChain = (value: unknown) => {
+        try {
+          setChainId(hexToNumber(value));
+        } catch {
+          setChainId(null);
+        }
+      };
+      found.on?.("accountsChanged", onAccounts as never);
+      found.on?.("chainChanged", onChain as never);
+      detach = () => {
+        found.removeListener?.("accountsChanged", onAccounts as never);
+        found.removeListener?.("chainChanged", onChain as never);
+      };
+    };
+    const look = (): boolean => {
+      const found = findInjectedWallet(win);
+      if (!found) return false;
+      attach(found);
+      return true;
+    };
+    const onInitialized = () => {
+      if (!detach) look();
+    };
+    if (!look()) {
+      // A wallet app's own browser on a phone can put the wallet on the page after the page has loaded, and announces it with an event.
+      // The page listens for that, and looks again for a few seconds, before it says no wallet was found.
+      window.addEventListener("ethereum#initialized", onInitialized);
+      const poll = () => {
+        if (detach) return;
+        tries += 1;
+        if (look()) return;
+        if (tries < WALLET_LOOK_TRIES) timer = setTimeout(poll, WALLET_LOOK_MS);
+        else setStatus("unavailable");
+      };
+      timer = setTimeout(poll, WALLET_LOOK_MS);
     }
-    setProvider(found);
-    const onAccounts = (accounts: unknown) => {
-      const first = Array.isArray(accounts) ? accounts[0] : undefined;
-      if (typeof first === "string") setAccount(first);
-      else {
-        setAccount(null);
-        setStatus("idle");
-      }
-    };
-    const onChain = (value: unknown) => {
-      try {
-        setChainId(hexToNumber(value));
-      } catch {
-        setChainId(null);
-      }
-    };
-    found.on?.("accountsChanged", onAccounts as never);
-    found.on?.("chainChanged", onChain as never);
     return () => {
-      found.removeListener?.("accountsChanged", onAccounts as never);
-      found.removeListener?.("chainChanged", onChain as never);
+      if (timer) clearTimeout(timer);
+      window.removeEventListener("ethereum#initialized", onInitialized);
+      detach?.();
     };
   }, []);
 
   const connect = useCallback(async () => {
-    if (!provider) return;
+    if (!provider) {
+      setError("No wallet is ready yet. If this page is open in a wallet app's browser, give it a moment and press Connect again.");
+      return;
+    }
     setError(null);
     setStatus("connecting");
     try {
@@ -140,7 +178,8 @@ export function useReader(): ReaderState {
     }
     let cancelled = false;
     const network = Network.from(config.chainId);
-    const provider = new JsonRpcProvider(config.rpcUrl, network, { staticNetwork: network, cacheTimeout: -1 });
+    // Reads go to the first endpoint that answers and fall back to the next ones; every request has a time limit.
+    const provider = new FailoverJsonRpcProvider(readEndpoints({ chainId: config.chainId, rpcUrl: config.rpcUrl }), network, { staticNetwork: network, cacheTimeout: -1 }, 15_000);
     setState({ status: "loading" });
     openReader(provider, { router: config.router, vault: config.vault })
       .then((reader) => {

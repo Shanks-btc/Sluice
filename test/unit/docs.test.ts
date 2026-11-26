@@ -1,12 +1,16 @@
 // The README and the other documents, held to what the code, the tests and the chain data can show.
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect } from "chai";
 import { BANNED, checkStatusTable, parseStatusTable, scanClaims, scanLiveWord, STATUSES } from "../../src/claims";
 import type { StatusRow } from "../../src/claims";
 import { parseEvidenceStrict } from "../../src/evidence";
+import { VAULT_RECORD_PATH, explorerShowsVault } from "../../src/vault-record";
+import { founderAddresses, ownRowCount, parseFounderList } from "../../src/summary";
+import { CLAIM_TYPES } from "../../src/recorder";
+import { safeReaddir } from "../../src/secret-paths";
 import { MUTATIONS } from "../../scripts/mutation-check";
 import { WEB_MUTATIONS } from "../../scripts/mutation-web";
 import { LIVE_MUTATIONS } from "../../scripts/mutation-live";
@@ -28,9 +32,11 @@ import {
 import { ONBOARD_APPROVE_GAS, ONBOARD_DEPOSIT_GAS } from "@sluice/sdk";
 
 const root = join(__dirname, "..", "..");
-const read = (path: string) => readFileSync(join(root, path), "utf8");
+// Line endings are LF here whatever git's autocrlf did to the checkout, so the comparisons below do not depend on it.
+const read = (path: string) => readFileSync(join(root, path), "utf8").replace(/\r\n/g, "\n");
 const README = read("README.md");
 const evidenceRows = parseEvidenceStrict(read("docs/EVIDENCE.md"));
+const vaultShown = explorerShowsVault(read(VAULT_RECORD_PATH)) !== null;
 const mainnetRows = evidenceRows.filter((r) => r.network === "mainnet").length;
 const testnetRows = evidenceRows.filter((r) => r.network === "testnet").length;
 const FOUNDER_DESCRIPTION =
@@ -116,7 +122,24 @@ describe("Docs: the README's sections", () => {
     // The founder's description, word for word.
     expect(paragraph.startsWith(FOUNDER_DESCRIPTION), "the paragraph opens with the founder's description, unchanged").to.equal(true);
     expect(paragraph).to.match(/QUSDC/);
-    expect(paragraph).to.match(/has not been deployed/); // says plainly where it stands
+    // It says plainly where it stands, and what it says follows the evidence file.
+    const mainnet = evidenceRows.filter((r) => r.network === "mainnet");
+    if (mainnet.length === 0) {
+      expect(paragraph).to.match(/has not been deployed/);
+    } else {
+      expect(paragraph).to.not.match(/has not been deployed|evidence file\]\(docs\/EVIDENCE\.md\) is empty/);
+      if (mainnet.some((r) => r.event === "Deployed")) expect(paragraph).to.match(/deployed on QIE mainnet/);
+      if (!mainnet.some((r) => r.event === "Settled")) expect(paragraph).to.match(/no row for a settled payment/);
+      else expect(paragraph).to.not.match(/no row for a settled payment/);
+      // While every row is about a listed wallet, the paragraph says the rows are founder-run and that nobody outside paid.
+      const list = parseFounderList(JSON.parse(read("docs/founder-wallets.json")));
+      if (ownRowCount(evidenceRows, "mainnet", founderAddresses(list)) === mainnet.length) {
+        expect(paragraph).to.contain("All of it is founder-run");
+        expect(paragraph).to.contain("0 paid calls by anyone outside the project");
+      } else {
+        expect(paragraph).to.not.contain("All of it is founder-run");
+      }
+    }
     expect(lines[5]).to.equal("");
     expect(lines[6]).to.equal("## Contents");
   });
@@ -283,6 +306,45 @@ describe("Docs: the status table and the evidence agree", () => {
     expect([Number(line![1]), Number(line![2])]).to.deep.equal([mainnetRows, testnetRows]);
   });
 
+  it("says beside the counts how many rows are the project's own, and which list says so, as the two files have it", () => {
+    const list = parseFounderList(JSON.parse(read("docs/founder-wallets.json")));
+    const own = ownRowCount(evidenceRows, "mainnet", founderAddresses(list));
+    const body = section(README, "Evidence");
+    const said = /Of the mainnet rows, (\d+) (?:is|are) about wallets on that list/.exec(body);
+    expect(Number(said?.[1]), "the count of the project's own rows").to.equal(own);
+    expect(body).to.contain(`The list is at version ${list.version} and holds ${list.wallets.length} wallets`);
+    expect(body).to.not.contain("The list is empty");
+    // Wherever the README lists the recorded rows, it says whose they are: all of them, only while that is so.
+    const places = README.split(/\r?\n/).filter((l) => /rows? for the deployment, the router's source|rows are for the deployment, the router's source/.test(l));
+    expect(places).to.have.length(3);
+    for (const line of places) {
+      if (own === mainnetRows && own > 0) expect(line).to.match(/all (of those rows are )?about the project's own wallets/i);
+      else expect(line).to.not.match(/all (of those rows are )?about the project's own wallets/i);
+    }
+  });
+
+  it("says in the evidence file that a row of a listed wallet shows no use by anyone else", () => {
+    const page = read("docs/EVIDENCE.md");
+    expect(page).to.contain("A row shows that a transaction happened. It does not show that anyone outside the project used Sluice");
+    expect(page).to.contain("[founder list](founder-wallets.json)");
+  });
+
+  it("keeps the evidence file's table of claims in one piece, with a row for every claim the recorder knows", () => {
+    // A paragraph put between its rows ends the table there: the rows after it then show as text with bars in it, on the page too.
+    const claims = read("docs/EVIDENCE.md").replace(/\r\n/g, "\n").split(/^## Claims$/m)[1]!.split(/^## /m)[0]!;
+    const tables = claims.split("\n\n").filter((block) => block.trimStart().startsWith("|"));
+    expect(tables, "one table").to.have.length(1);
+    const named = [...tables[0]!.matchAll(/^\| `([a-z-]+)` \|/gm)].map((m) => m[1] as string);
+    expect([...named].sort()).to.deep.equal([...CLAIM_TYPES].sort());
+    expect(claims.split("\n").filter((l) => l.startsWith("|")), "no line of a table outside it").to.have.length(named.length + 2);
+  });
+
+  it("says in evidence-related documents nothing that takes the list for empty", () => {
+    for (const file of ["README.md", ...safeReaddir(join(root, "docs")).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`)]) {
+      expect(read(file), file).to.not.match(/founder list (version 1 )?\(0 wallets\)|list (is|being) empty|which is empty until you add them/i);
+    }
+  });
+
   it("says in the evidence section that nothing is claimed beyond the rows", () => {
     const body = section(README, "Evidence");
     expect(body).to.contain("pnpm evidence:check");
@@ -336,7 +398,7 @@ describe("Docs: claims nobody can back up are not made", () => {
   const files = [
     "README.md",
     "DECISIONS.md",
-    ...readdirSync(join(root, "docs")).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`),
+    ...safeReaddir(join(root, "docs")).filter((f) => f.endsWith(".md")).map((f) => `docs/${f}`),
     "design/PALETTE.md",
     ...["packages/sdk", "packages/facilitator", "packages/proxy", "packages/wallet-mcp", "examples/paid-tools"].map((d) => `${d}/README.md`),
   ].filter((f) => !EXEMPT.has(f));
@@ -347,7 +409,7 @@ describe("Docs: claims nobody can back up are not made", () => {
 
   for (const file of files) {
     it(`${file} has no banned claim and no deployment claim without a mainnet row`, () => {
-      expect(scanClaims(file, read(file), mainnetRows)).to.deep.equal([]);
+      expect(scanClaims(file, read(file), mainnetRows, vaultShown)).to.deep.equal([]);
     });
   }
 
@@ -377,6 +439,21 @@ describe("Docs: claims nobody can back up are not made", () => {
       for (const text of ["Sluice is live on QIE mainnet.", "The router is deployed to QIE mainnet.", "It is now live.", "Running on mainnet in production."]) {
         expect(flagged(text, 0), text).to.include("no deployment claim without a mainnet evidence row");
         expect(flagged(text, 1), `${text} with a row`).to.not.include("no deployment claim without a mainnet evidence row");
+      }
+    });
+
+    it("flags a claim that the vault is verified on the explorer whatever the evidence file holds, and leaves a denial of it alone", () => {
+      for (const text of ["The vault is verified on the explorer.", "Both contracts are verified.", "Verified source for PaymentRouter and AgentVault.", "Verify the router's and the vault's source."]) {
+        for (const rows of [0, 3]) expect(flagged(text, rows), `${text} with ${rows} rows`).to.include("no claim that the vault is verified on the explorer");
+      }
+      for (const text of ["The vault is not verified on the explorer.", "Nothing is submitted for the vault.", "The explorer shows verified source for the router."]) {
+        expect(flagged(text, 3), text).to.not.include("no claim that the vault is verified on the explorer");
+      }
+      // With the explorer's answer on file, the claim has to be the explorer's; the file's rows still play no part.
+      const withRecord = (text: string, rows: number) => scanClaims("x.md", text, rows, true).map((f) => f.rule);
+      for (const rows of [0, 3]) {
+        expect(withRecord("The vault is verified.", rows)).to.deep.equal(["a claim that the vault is verified must say that the explorer shows it"]);
+        expect(withRecord("QIE's explorer showed verified source for the vault.", rows)).to.deep.equal([]);
       }
     });
 
@@ -422,52 +499,77 @@ describe("Docs: commands, variables and layout are real", () => {
   });
 
   describe("environment variables", () => {
-    const example = read(".env.example").split("\n");
-    const declared = example.filter((l) => /^[A-Z][A-Z0-9_]*=/.test(l));
+    // .env.example holds names and no values, and it is the one env file a test reads. A failure here gives a file's name and a line number,
+    // and never what the line says: only the name before the first "=" is kept.
+    const declared = read(".env.example")
+      .split("\n")
+      .flatMap((text, i) => {
+        const m = /^([A-Z][A-Z0-9_]*)=/.exec(text);
+        return m ? [{ name: m[1] as string, at: `.env.example:${i + 1}`, empty: text.length === m[0].length }] : [];
+      });
+    const declaredNames = new Set(declared.map((d) => d.name));
 
     it(".env.example holds names only, never a value", () => {
-      for (const line of declared) expect(line, line).to.match(/^[A-Z][A-Z0-9_]*=$/);
-      expect(read(".gitignore")).to.match(/^\.env$/m);
-      expect(read(".gitignore")).to.match(/^!\.env\.example$/m);
+      expect(declared.length).to.be.greaterThan(10);
+      expect(declared.filter((d) => !d.empty).map((d) => d.at), "lines that hold a value").to.deep.equal([]);
+      expect(/^\.env$/m.test(read(".gitignore")), ".gitignore ignores .env").to.equal(true);
+      expect(/^!\.env\.example$/m.test(read(".gitignore")), ".gitignore keeps .env.example").to.equal(true);
     });
 
     it("the README table lists exactly the names in .env.example", () => {
-      const inReadme = [...section(README, "Environment variables").matchAll(/^\| `([A-Z][A-Z0-9_]*)` \|/gm)].map((m) => m[1] as string);
-      const inExample = declared.map((l) => l.slice(0, -1));
-      expect(inReadme.sort()).to.deep.equal(inExample.sort());
+      const lines = README.split("\n");
+      const from = lines.indexOf("## Environment variables");
+      const to = lines.findIndex((l, i) => i > from && l.startsWith("## "));
+      const inReadme = lines.flatMap((text, i) => {
+        const m = i > from && i < to ? /^\| `([A-Z][A-Z0-9_]*)` \|/.exec(text) : null;
+        return m ? [{ name: m[1] as string, at: `README.md:${i + 1}` }] : [];
+      });
+      const tableNames = new Set(inReadme.map((r) => r.name));
+      expect(declared.filter((d) => !tableNames.has(d.name)).map((d) => d.at), "names the README table does not list").to.deep.equal([]);
+      expect(inReadme.filter((r) => !declaredNames.has(r.name)).map((r) => r.at), "names .env.example does not declare").to.deep.equal([]);
+      expect(inReadme.length, "no name twice in either").to.equal(declared.length);
     });
 
     it("every variable the code reads is declared in .env.example", () => {
-      const names = new Set(declared.map((l) => l.slice(0, -1)));
       const files = [
         "hardhat.config.ts",
         ...["src", "scripts", "scripts/live", "scripts/evidence", "scripts/client", "test/helpers", "test/fork", "packages/sdk/src", "packages/facilitator/src", "packages/proxy/src", "packages/wallet-mcp/src", "examples/paid-tools/src", "apps/web/src", "apps/web/src/lib", "apps/web/src/app/evidence"].flatMap((dir) =>
-          readdirSync(join(root, dir)).filter((f) => /\.(ts|tsx)$/.test(f)).map((f) => `${dir}/${f}`),
+          safeReaddir(join(root, dir)).filter((f) => /\.(ts|tsx)$/.test(f)).map((f) => `${dir}/${f}`),
         ),
       ];
-      const used = new Set<string>();
+      /** Each name the code reads, with the first place it is read. */
+      const used = new Map<string, string>();
       for (const file of files) {
-        const code = read(file).split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
-        for (const m of code.matchAll(/process\.env\.([A-Z][A-Z0-9_]*)/g)) used.add(m[1] as string);
-        for (const m of code.matchAll(/process\.env\["([A-Z][A-Z0-9_]*)"\]/g)) used.add(m[1] as string);
-        for (const m of code.matchAll(/\b(SLUICE_[A-Z0-9_]+|EVIDENCE_RPC_URL|NEXT_PUBLIC_[A-Z0-9_]+)\b/g)) used.add(m[1] as string);
+        read(file).split("\n").forEach((line, i) => {
+          if (line.trim().startsWith("//")) return;
+          for (const rule of [/process\.env\.([A-Z][A-Z0-9_]*)/g, /process\.env\["([A-Z][A-Z0-9_]*)"\]/g, /\b(SLUICE_[A-Z0-9_]+|EVIDENCE_RPC_URL|NEXT_PUBLIC_[A-Z0-9_]+)\b/g]) {
+            for (const m of line.matchAll(rule)) if (!used.has(m[1] as string)) used.set(m[1] as string, `${file}:${i + 1}`);
+          }
+        });
       }
       used.delete("NODE_ENV");
       expect(used.size).to.be.greaterThan(10);
-      for (const name of used) expect(names.has(name), `${name} is used by the code but missing from .env.example`).to.equal(true);
-      for (const name of names) expect(used.has(name), `${name} is in .env.example but no code reads it`).to.equal(true);
+      expect([...used].filter(([name]) => !declaredNames.has(name)).map(([, at]) => at), "places that read a name .env.example does not declare").to.deep.equal([]);
+      expect(declared.filter((d) => !used.has(d.name)).map((d) => d.at), "names declared that no code reads").to.deep.equal([]);
     });
 
     it("no file in the repository assigns a value to SLUICE_KEY, SLUICE_RELAYER_KEY or SLUICE_AGENT_KEY", () => {
+      // Secret files are skipped by their names, before anything is opened, so of the env files this reads .env.example alone.
       const walk = (dir: string): string[] =>
-        readdirSync(join(root, dir)).flatMap((name) => {
+        safeReaddir(join(root, dir)).flatMap((name) => {
           if (["node_modules", "artifacts", "cache", "dist", ".git", ".next"].includes(name)) return [];
           const rel = dir ? `${dir}/${name}` : name;
           return statSync(join(root, rel)).isDirectory() ? walk(rel) : [rel];
         });
-      for (const file of walk("").filter((f) => /\.(ts|md|json|example|yaml|sol)$|^\.env/.test(f))) {
-        expect(read(file), file).to.not.match(/SLUICE_(RELAYER_|AGENT_)?KEY\s*=\s*['"]?0x[0-9a-fA-F]{8,}/);
+      const files = walk("").filter((f) => /\.(ts|md|json|example|yaml|sol)$/.test(f));
+      expect(files).to.include(".env.example");
+      expect(files.filter((f) => /(^|\/)\.env/.test(f)), "the env files read").to.deep.equal([".env.example"]);
+      const found: string[] = [];
+      for (const file of files) {
+        const text = read(file);
+        for (const m of text.matchAll(/SLUICE_(RELAYER_|AGENT_)?KEY\s*=\s*['"]?0x[0-9a-fA-F]{8,}/g)) found.push(`${file}:${text.slice(0, m.index).split("\n").length}`);
       }
+      expect(found, "lines that assign a key").to.deep.equal([]);
     });
   });
 
@@ -493,12 +595,14 @@ describe("Docs: commands, variables and layout are real", () => {
     it("every source file in the repository is in the layout", () => {
       // Build output and generated files are git-ignored, so they are not part of the source. The screenshots folder is listed, but its
       // images are not named one by one.
-      const ignored = new Set(["node_modules", "artifacts", "cache", "dist", ".git", "deployment.json", "evidence-draft.json", ".next", "generated", "fonts", "test-results", "next-env.d.ts"]);
+      // The rehearsal's state file and its folder are git-ignored too. Secret files (key files, env files, the deployment record and the
+      // local run's folder) are left out by safeReaddir, and none of them is ever listed in a document.
+      const ignored = new Set(["node_modules", "artifacts", "cache", "dist", ".git", "evidence-draft.json", "testnet-token.json", "rehearsal-state.json", ".rehearsal", ".next", "generated", "fonts", "test-results", "next-env.d.ts"]);
       const walk = (dir: string): string[] =>
-        readdirSync(join(root, dir)).flatMap((name) => {
-          if (ignored.has(name) || name.endsWith(".tsbuildinfo") || (dir === "" && name.startsWith(".env") && name !== ".env.example")) return [];
+        safeReaddir(join(root, dir)).flatMap((name) => {
+          if (ignored.has(name) || name.endsWith(".tsbuildinfo")) return [];
           const rel = dir ? `${dir}/${name}` : name;
-          if (dir === "design/screenshots/slice3") return [];
+          if (dir === "design/screenshots/slice3" || dir === "design/screenshots/slice5") return [];
           return statSync(join(root, rel)).isDirectory() ? walk(rel) : [rel];
         });
       for (const file of walk("")) expect(listed.has(file), `${file} is missing from the README layout`).to.equal(true);
@@ -658,7 +762,36 @@ describe("Docs: the risks document says what the tests and the chain showed", ()
     expect((risks.match(/^\| Can \|/gm) ?? []).length).to.equal(2);
     expect((risks.match(/^\| Cannot \|/gm) ?? []).length).to.equal(5);
     expect(risks).to.match(/^## 7\. What was not tested/m);
-    expect(risks).to.contain("Anything on QIE mainnet or testnet");
+    // What was not tested on the live chain follows the evidence file.
+    if (mainnetRows === 0) expect(risks).to.contain("Anything on QIE mainnet or testnet");
+    else {
+      expect(risks).to.contain("Anything on QIE mainnet beyond what the rows of `docs/EVIDENCE.md` show");
+      expect(risks).to.not.match(/has no rows|has never been written|row has never been written/i);
+    }
+  });
+
+  it("names exactly the kinds of claim that have a mainnet row, and the ones that have none, as the evidence file does", () => {
+    const kinds: string[] = [...CLAIM_TYPES];
+    // A claim cell may carry more after the claim type (a top-up's hash, a tool's name).
+    const recorded = new Set(evidenceRows.filter((r) => r.network === "mainnet").map((r) => (r.claim ?? "").split(/[\s(:,]+/)[0] ?? ""));
+    for (const kind of recorded) expect(kinds, `a claim type this test knows: ${kind}`).to.include(kind);
+    if (recorded.size === 0) return;
+    const bullet = /- Part of the recorder against a real QIE network\.[\s\S]*?(?=\n- )/.exec(risks.replace(/\r\n/g, "\n"))?.[0] ?? "";
+    const [have, rest] = bullet.split("have no mainnet row");
+    if (testnetRows === 0) expect(bullet).to.contain("No testnet row has been written");
+    if (kinds.every((kind) => recorded.has(kind))) {
+      expect(rest, "no kind is said to have no mainnet row when every kind has one").to.equal(undefined);
+      const listed = bullet.split("every claim it knows has a mainnet row:")[1]?.split(". ")[0] ?? "";
+      for (const kind of kinds) expect(listed, `${kind} is named`).to.contain(`\`${kind}\``);
+      return;
+    }
+    expect(bullet).to.not.contain("every claim it knows has a mainnet row");
+    const before = (have ?? "").split(". The claims ");
+    for (const kind of kinds) {
+      if (recorded.has(kind)) expect(before[0], `${kind} has a mainnet row`).to.contain(`\`${kind}\``);
+      else expect(before[1], `${kind} has no mainnet row`).to.contain(`\`${kind}\``);
+    }
+    expect(rest, "the bullet says where the rest were run").to.not.equal(undefined);
   });
 
   it("dates every measurement of the live chain", () => {
@@ -673,9 +806,10 @@ describe("Docs: the previous project name appears only in the rename row", () =>
   // The old name is assembled from pieces so that this file does not contain it either.
   const OLD = ["pay", "meter"].join("");
   // "generated" holds copies of the documents (DECISIONS.md and the dated pre-build record), which are checked at their source.
+  // Secret files are left out by safeReaddir before anything is opened.
   const skip = new Set(["node_modules", "artifacts", "cache", "dist", ".git", ".next", "generated"]);
   const walk = (dir: string): string[] =>
-    readdirSync(join(root, dir)).flatMap((name) => {
+    safeReaddir(join(root, dir)).flatMap((name) => {
       if (skip.has(name)) return [];
       const rel = dir ? `${dir}/${name}` : name;
       return statSync(join(root, rel)).isDirectory() ? [rel, ...walk(rel)] : [rel];
@@ -806,7 +940,7 @@ describe("Docs: the numbers the README gives about the new tooling are the real 
     const match = /`pnpm mutation:live` changes one condition at a time in the go-live code, (\d+) changes in all/.exec(section(README, "Safety and tests"));
     expect(match, "the README states the number of go-live mutations").to.not.equal(null);
     expect(Number(match![1])).to.equal(LIVE_MUTATIONS.length);
-    expect(LIVE_MUTATIONS.length).to.be.within(20, 40);
+    expect(LIVE_MUTATIONS.length).to.be.within(60, 120); // 30 for the journal and the recorder, and 43 for the mainnet path's guards and tools
   });
 
   it("every web command the README gives is a script, and the web app's own pages and checks exist", () => {

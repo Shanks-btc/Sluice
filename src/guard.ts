@@ -33,7 +33,12 @@ export class GuardError extends Error {
   }
 }
 
-export type Caps = { maxQusdc: bigint; maxQieWei: bigint };
+export type Caps = {
+  maxQusdc: bigint;
+  maxQieWei: bigint;
+  /** The most QIE any one transaction may cost, at its gas limit and gas price. Optional: set by SLUICE_MAX_TX_QIE. */
+  maxTxQieWei?: bigint;
+};
 
 /** What a script says it may spend, at worst. QUSDC leaves the signer's wallet; QIE is gas. */
 export type Plan = { qusdc: bigint; qieWei: bigint; summary: string };
@@ -77,7 +82,12 @@ export function readCaps(env: Record<string, string | undefined>): Caps {
   if (maxQieWei > CEILING_QIE_WEI) {
     throw new GuardError(`SLUICE_MAX_QIE is above the hard ceiling of ${formatQie(CEILING_QIE_WEI)} QIE`);
   }
-  return { maxQusdc, maxQieWei };
+  const rawTx = env.SLUICE_MAX_TX_QIE?.trim();
+  const maxTxQieWei = rawTx ? parseAmount(rawTx, 18, "SLUICE_MAX_TX_QIE") : undefined;
+  if (maxTxQieWei !== undefined && maxTxQieWei > maxQieWei) {
+    throw new GuardError("SLUICE_MAX_TX_QIE is above SLUICE_MAX_QIE, so it could never apply");
+  }
+  return { maxQusdc, maxQieWei, ...(maxTxQieWei !== undefined ? { maxTxQieWei } : {}) };
 }
 
 const LOCAL = /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?(\/|$)/;
@@ -176,6 +186,9 @@ export class SpendMeter {
       throw new GuardError(`stopping: gas price is above ${MAX_GAS_PRICE_WEI / 1_000_000_000n} gwei`);
     }
     const worst = gasLimit * gasPrice;
+    if (this.caps.maxTxQieWei !== undefined && worst > this.caps.maxTxQieWei) {
+      throw new GuardError(`stopping: one transaction could cost ${formatQie(worst)} QIE, above the cap of ${formatQie(this.caps.maxTxQieWei)} QIE for a single transaction`);
+    }
     if (this.qieSpent + this.qieReserved + worst > this.caps.maxQieWei) {
       throw new GuardError(`stopping: the next transaction could pass the cap of ${formatQie(this.caps.maxQieWei)} QIE`);
     }

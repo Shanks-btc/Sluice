@@ -18,12 +18,22 @@ import {
   PAYMENT_META_KEY,
   QUSDC_ADDRESS,
   RateLimiter,
-  TimedJsonRpcProvider,
+  RequestCounter,
+  FailoverJsonRpcProvider,
+  NoHealthyEndpoint,
+  bearerMatches,
   clientAddress,
+  describeSelection,
+  orderedUrls,
+  requireNodeChain,
+  resolveEndpoint,
   createLogger,
   createPaywall,
   mcpRequestListener,
   parseQusdc,
+  renderGauges,
+  requestIdFor,
+  routeLabel,
   silentLogger,
 } from "@sluice/sdk";
 import type { Logger, LogLevel } from "@sluice/sdk";
@@ -43,7 +53,10 @@ export type ToolServerEnv = {
   facilitatorUrl: string;
   payee: string;
   rpcUrl: string;
-  explorerUrl: string;
+  /** True when SLUICE_RPC_URL names the endpoint (or the node is local): it is used as given. False: QIE's public endpoints are probed and the first healthy one is used. */
+  rpcNamed: boolean;
+  /** The explorer the tools read, or undefined for none. Only mainnet has a default: no testnet explorer is known, and a mainnet explorer must not answer for testnet addresses. */
+  explorerUrl?: string;
   /** The price of each tool, as the builder set it. */
   prices: Record<ToolName, string>;
   host: string;
@@ -55,8 +68,33 @@ export type ToolServerEnv = {
   unpaidPerMinute: number;
   trustedProxyHops: number;
   rpcTimeoutMs: number;
+  /** Browser origins that may call the server (SLUICE_TOOLS_CORS_ORIGINS). Empty: no page can read an answer. Exact origins, never a wildcard. */
+  corsOrigins: string[];
+  /** The bearer token for the private metrics path, as a function so that it is never printed. Undefined: the path does not exist. */
+  metricsToken: () => string | undefined;
   logLevel: LogLevel;
 };
+
+/** Exact origins, separated by commas: https, or http on this machine, with no path and no wildcard. */
+export function parseCorsOrigins(text: string | undefined): string[] {
+  const out: string[] = [];
+  for (const raw of (text ?? "").split(",")) {
+    const o = raw.trim();
+    if (!o) continue;
+    let url: URL;
+    try {
+      url = new URL(o);
+    } catch {
+      throw new ToolServerEnvError("refusing to start: SLUICE_TOOLS_CORS_ORIGINS holds an origin that is not a URL");
+    }
+    const local = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+    if (o.includes("*") || url.origin !== o || !(url.protocol === "https:" || (url.protocol === "http:" && local))) {
+      throw new ToolServerEnvError("refusing to start: SLUICE_TOOLS_CORS_ORIGINS must list exact origins (https, or http on this machine), each with no path and no wildcard");
+    }
+    if (!out.includes(o)) out.push(o);
+  }
+  return out;
+}
 
 const RPC = { mainnet: "https://rpc1mainnet.qie.digital/", testnet: "https://rpc1testnet.qie.digital/" } as const;
 const CHAIN = { mainnet: 1990, testnet: 1983, local: 1990 } as const;
@@ -109,8 +147,8 @@ export function readToolServerEnv(env: Env): ToolServerEnv {
   if (!rpcUrl) throw new ToolServerEnvError("refusing to start: set SLUICE_RPC_URL for a local node");
   if (!rpcUrl.startsWith("https://") && !LOCAL.test(rpcUrl)) throw new ToolServerEnvError("refusing to start: SLUICE_RPC_URL must be https");
   if (network === "local" && !LOCAL.test(rpcUrl)) throw new ToolServerEnvError("refusing to start: a local run needs an http://127.0.0.1 RPC");
-  const explorerUrl = env.SLUICE_EXPLORER_URL?.trim() || PUBLIC_EXPLORER;
-  if (!explorerUrl.startsWith("https://") && !LOCAL.test(explorerUrl)) throw new ToolServerEnvError("refusing to start: SLUICE_EXPLORER_URL must be https");
+  const explorerUrl = env.SLUICE_EXPLORER_URL?.trim() || (network === "mainnet" ? PUBLIC_EXPLORER : undefined);
+  if (explorerUrl && !explorerUrl.startsWith("https://") && !LOCAL.test(explorerUrl)) throw new ToolServerEnvError("refusing to start: SLUICE_EXPLORER_URL must be https");
   const host = env.SLUICE_TOOLS_HOST?.trim() || "127.0.0.1";
   if (!HOST.test(host)) throw new ToolServerEnvError("refusing to start: SLUICE_TOOLS_HOST is not an address");
   const level = env.SLUICE_TOOLS_LOG_LEVEL?.trim() || "info";
@@ -120,13 +158,18 @@ export function readToolServerEnv(env: Env): ToolServerEnv {
   const ipPerMinute = whole("SLUICE_TOOLS_RATE_LIMIT_IP", env.SLUICE_TOOLS_RATE_LIMIT_IP, 300, 1, 100_000);
   const unpaidPerMinute = whole("SLUICE_TOOLS_RATE_LIMIT_UNPAID", env.SLUICE_TOOLS_RATE_LIMIT_UNPAID, 60, 1, 100_000);
   if (unpaidPerMinute > ipPerMinute) throw new ToolServerEnvError("refusing to start: SLUICE_TOOLS_RATE_LIMIT_UNPAID is above SLUICE_TOOLS_RATE_LIMIT_IP, so it could never apply");
-  return {
+  const metrics = env.SLUICE_TOOLS_METRICS_TOKEN?.trim() || undefined;
+  if (metrics !== undefined && !/^[A-Za-z0-9._~+/=-]{24,200}$/.test(metrics)) {
+    throw new ToolServerEnvError("refusing to start: SLUICE_TOOLS_METRICS_TOKEN must be 24 to 200 characters of letters, digits and . _ ~ + / = -");
+  }
+  const out: ToolServerEnv = {
     network,
     chainId: CHAIN[network],
     router: getAddress(router),
     facilitatorUrl: facilitatorUrl.replace(/\/+$/, ""),
     payee: getAddress(payee),
     rpcUrl,
+    rpcNamed: Boolean(env.SLUICE_RPC_URL?.trim()) || network === "local",
     explorerUrl,
     prices: parsePrices(env.SLUICE_TOOLS_PRICES),
     host,
@@ -136,8 +179,12 @@ export function readToolServerEnv(env: Env): ToolServerEnv {
     unpaidPerMinute,
     trustedProxyHops: whole("SLUICE_TOOLS_TRUST_PROXY_HOPS", env.SLUICE_TOOLS_TRUST_PROXY_HOPS, 0, 0, 5),
     rpcTimeoutMs: whole("SLUICE_TOOLS_RPC_TIMEOUT_MS", env.SLUICE_TOOLS_RPC_TIMEOUT_MS, 10_000, 500, 60_000),
+    corsOrigins: parseCorsOrigins(env.SLUICE_TOOLS_CORS_ORIGINS),
+    metricsToken: () => metrics,
     logLevel: level,
   };
+  Object.defineProperty(out, "metricsToken", { enumerable: false, value: out.metricsToken });
+  return out;
 }
 
 // ------------------------------------------------------------------------------------------------ telling paid from unpaid
@@ -184,6 +231,9 @@ export type ToolServer = {
   asset: string;
 };
 
+export const METRICS_PATH = "/internal/metrics";
+const KNOWN_ROUTES = ["/health", "/mcp", METRICS_PATH] as const;
+
 const rpcError = (code: number, message: string) => JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null });
 
 function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
@@ -208,8 +258,27 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
   const env = options.env;
   const log = options.logger ?? silentLogger;
   const network = Network.from(env.chainId);
+  // The endpoint: one named by SLUICE_RPC_URL as given, otherwise the first of QIE's public endpoints that answers with this chain's id,
+  // with the others as fallbacks for reads.
+  let urls = [env.rpcUrl];
+  if (!env.rpcNamed && (env.network === "mainnet" || env.network === "testnet")) {
+    try {
+      const sel = await resolveEndpoint(env.network, undefined);
+      log.info("rpc endpoint chosen", { endpoint: describeSelection(sel) });
+      urls = orderedUrls(sel);
+    } catch (err) {
+      throw new ToolServerEnvError(`refusing to start: ${err instanceof NoHealthyEndpoint ? err.message : "no RPC endpoint could be probed"}`);
+    }
+  }
   // Every request to the node has a time limit: ethers would otherwise wait up to five minutes, or for ever on a node that never answers.
-  const provider = new TimedJsonRpcProvider(env.rpcUrl, network, { staticNetwork: network }, env.rpcTimeoutMs);
+  const provider = new FailoverJsonRpcProvider(urls, network, { staticNetwork: network }, env.rpcTimeoutMs);
+  // A provider made with a fixed network never asks the node which chain it is on, so ask it here (a named SLUICE_RPC_URL is used as given).
+  try {
+    await requireNodeChain(provider, env.chainId, env.network);
+  } catch (err) {
+    provider.destroy();
+    throw new ToolServerEnvError(`refusing to start: ${err instanceof Error ? err.message : "the RPC's chain could not be checked"}`);
+  }
   const rpc = options.rpc ?? withTimeout(rpcFromProvider(provider), env.rpcTimeoutMs);
   // What the router holds is the asset payments are in. A router that cannot be read, or on mainnet one that holds anything but
   // QUSDC, stops the start: a tool server must not take a price in a token the builder did not mean.
@@ -234,7 +303,7 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
     paywall,
     payee: env.payee,
     rpc,
-    explorer: options.explorer ?? explorerClient(env.explorerUrl, fetch, env.rpcTimeoutMs),
+    explorer: options.explorer ?? (env.explorerUrl ? explorerClient(env.explorerUrl, fetch, env.rpcTimeoutMs) : undefined),
     prices: env.prices,
   });
   const listener = mcpRequestListener(build);
@@ -247,11 +316,50 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
     res.writeHead(status, { "content-type": "application/json", "cache-control": "no-store", ...extra }).end(text);
   };
 
+  const counter = new RequestCounter();
+  const calls = { paid: 0, unpaid: 0, rateLimited: 0 };
+  // The token is a function that is not an own enumerable property, so a settings object that was copied (spread) has lost it: that means no token, never an error.
+  const metricsToken = typeof env.metricsToken === "function" ? env.metricsToken() : undefined;
+
   const server = createServer((req, res) => {
     void (async () => {
       const started = Date.now();
+      // Every request has an id (the caller's, if well formed), which comes back in x-request-id and in the log line.
+      const requestId = requestIdFor(req.headers["x-request-id"]);
+      res.setHeader("x-request-id", requestId);
       try {
         const url = new URL(req.url ?? "/", "http://localhost");
+        const route = routeLabel(url.pathname, KNOWN_ROUTES);
+        res.once("finish", () => counter.record(route, res.statusCode));
+        // The private metrics path: it does not exist unless a token is set, it needs that token, and it never carries a CORS header.
+        if (url.pathname === METRICS_PATH) {
+          if (!metricsToken) return reply(res, 404, JSON.stringify({ error: "not_found" }));
+          if (req.method !== "GET") return reply(res, 405, JSON.stringify({ error: "method_not_allowed" }), { allow: "GET" });
+          if (!bearerMatches(req.headers.authorization, metricsToken)) return reply(res, 401, JSON.stringify({ error: "unauthorized" }), { "www-authenticate": 'Bearer realm="sluice-metrics"' });
+          const text = `${[
+            ...counter.lines("sluice_tools_requests_total"),
+            "# TYPE sluice_tools_calls_total counter",
+            `sluice_tools_calls_total{kind="paid"} ${calls.paid}`,
+            `sluice_tools_calls_total{kind="unpaid"} ${calls.unpaid}`,
+            `sluice_tools_calls_total{kind="rate_limited"} ${calls.rateLimited}`,
+            ...renderGauges([{ name: "sluice_tools_registered", value: Object.keys(env.prices).length, help: "Tools the server offers." }]),
+          ].join("\n")}\n`;
+          res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });
+          return void res.end(text);
+        }
+        // A page on a listed origin may read the answers of /mcp and /health. Any other origin gets no header, so its page cannot read them.
+        const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+        const allowed = origin !== undefined && env.corsOrigins.includes(origin);
+        if (allowed) {
+          res.setHeader("access-control-allow-origin", origin);
+          res.setHeader("access-control-expose-headers", "x-request-id, retry-after");
+          res.setHeader("vary", "Origin");
+        }
+        if (req.method === "OPTIONS") {
+          if (!allowed || (url.pathname !== "/mcp" && url.pathname !== "/health")) return reply(res, 404, JSON.stringify({ error: "not_found" }));
+          res.writeHead(204, { "access-control-allow-methods": "GET, POST, OPTIONS", "access-control-allow-headers": "content-type, accept, mcp-protocol-version, x-request-id", "access-control-max-age": "600", "cache-control": "no-store" });
+          return void res.end();
+        }
         if (req.method === "GET" && url.pathname === "/health") {
           return reply(res, 200, JSON.stringify({
             ok: true,
@@ -269,7 +377,8 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
         const client = clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], env.trustedProxyHops);
         const any = ipLimiter.hit(client);
         if (!any.ok) {
-          log.warn("rate limited", { client, kind: "any" });
+          calls.rateLimited += 1;
+          log.warn("rate limited", { requestId, client, kind: "any" });
           return reply(res, 429, rpcError(-32029, `too many requests; try again in ${any.retryAfterSeconds} seconds`), { "retry-after": String(any.retryAfterSeconds) });
         }
         const declared = Number(req.headers["content-length"]);
@@ -291,19 +400,22 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
         }
         if (typeof body !== "object" || body === null) return reply(res, 400, rpcError(-32600, "the request is not a JSON-RPC message"));
         const paid = carriesPayment(body);
+        if (paid) calls.paid += 1;
+        else calls.unpaid += 1;
         if (!paid) {
           const unpaid = unpaidLimiter.hit(client);
           if (!unpaid.ok) {
-            log.warn("rate limited", { client, kind: "unpaid" });
+            calls.rateLimited += 1;
+            log.warn("rate limited", { requestId, client, kind: "unpaid" });
             return reply(res, 429, rpcError(-32029, `too many requests without a payment; try again in ${unpaid.retryAfterSeconds} seconds`), { "retry-after": String(unpaid.retryAfterSeconds) });
           }
         }
         const what = describeRequest(body);
-        res.once("finish", () => log.info("request", { ...what, paid, status: res.statusCode, ms: Date.now() - started }));
+        res.once("finish", () => log.info("request", { requestId, ...what, paid, status: res.statusCode, ms: Date.now() - started }));
         let timer: NodeJS.Timeout | undefined;
         const late = new Promise<void>((resolve) => {
           timer = setTimeout(() => {
-            log.warn("a request took too long", { ...what });
+            log.warn("a request took too long", { requestId, ...what });
             reply(res, 504, rpcError(-32603, "the request took too long"));
             resolve();
           }, handlerTimeout);

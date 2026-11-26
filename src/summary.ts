@@ -53,6 +53,18 @@ export function parseFounderList(raw: unknown): FounderList {
   return { version: o.version as number, updated: o.updated, description: o.description, wallets, history };
 }
 
+/** The list's addresses in lower case, for matching whatever the letter case of what they are compared with. */
+export const founderAddresses = (list: FounderList): ReadonlySet<string> => new Set(list.wallets.map((w) => w.address.toLowerCase()));
+
+/**
+ * How many rows of the evidence file for one network are about a wallet on the list: the address in their Who column is listed. Such a
+ * row is the project's own, and shows nothing about anyone else. A row names one address, so this cannot see a listed wallet on the
+ * other side of a payment; the paid-call count below reads the payer, the payee and the signer from the chain.
+ */
+export function ownRowCount(rows: ReadonlyArray<{ network: string; who: string }>, network: string, founders: ReadonlySet<string>): number {
+  return rows.filter((r) => r.network === network && founders.has(r.who.toLowerCase())).length;
+}
+
 export type SettledEvent = {
   payer: string;
   payee: string;
@@ -81,7 +93,7 @@ export type Summary = {
 
 /** The whole filter. Pure, so a test can pin it. */
 export function summarize(events: SettledEvent[], list: FounderList): Summary {
-  const founders = new Set(list.wallets.map((w) => w.address.toLowerCase()));
+  const founders = founderAddresses(list);
   const payers = new Set<string>();
   const builders = new Set<string>();
   const out: Summary = {
@@ -201,6 +213,22 @@ export async function scanSettled(rpc: SummaryRpc, router: string, fromBlock: nu
     from = to + 1;
   }
   return { events, fromBlock, toBlock: latest, windows };
+}
+
+/** A summary client that asks each endpoint in turn: the first that answers is used, and the others are tried when it fails. */
+export function summaryRpcMany(urls: readonly string[], fetchImpl: typeof fetch = fetch): SummaryRpc {
+  const clients = urls.map((u) => summaryRpc(u, fetchImpl));
+  return async (method, params) => {
+    let last: unknown = new SummaryNetworkError("no endpoint");
+    for (const c of clients) {
+      try {
+        return await c(method, params);
+      } catch (err) {
+        last = err;
+      }
+    }
+    throw last;
+  };
 }
 
 export const rpcUrlFor = (network: Network, override?: string): string => override?.trim() || NETWORKS[network].rpc;

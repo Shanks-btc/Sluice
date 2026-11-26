@@ -16,6 +16,7 @@ import { WalletError, classifyWalletError, describeWalletError, networkState } f
 import type { Eip1193Provider } from "./eip1193";
 import { formatGwei, formatQie, formatUsdc, formatUtc, isAddress } from "./format";
 import { networkFor } from "./networks";
+import type { NetworkInfo } from "./networks";
 import type { ChainReader } from "./reads";
 
 // ---------------------------------------------------------------------------------------------- shared types
@@ -56,11 +57,18 @@ export type FacilitatorPort = {
   relay(request: RelayRequest): Promise<RelayResponse>;
 };
 
+/** Where a running flow is waiting, for the review dialog: on the wallet, on the network to confirm, or on the facilitator. */
+export type FlowProgress = { stage: "wallet" } | { stage: "network"; hash: string } | { stage: "facilitator" };
+
 export type FlowDeps = {
+  /** Told where the flow is waiting. Optional: a flow runs the same without it. */
+  onProgress?: (progress: FlowProgress) => void;
   wallet: Eip1193Provider;
   /** The connected account. */
   account: string;
   chainId: number;
+  /** The network this site is set to. A plan names it, and says whether real funds move, from this: a chain id alone cannot tell a local copy of mainnet from mainnet. */
+  network?: NetworkInfo;
   reader: ChainReader;
   facilitator?: FacilitatorPort;
   /** The facilitator's address, for the plan to name. */
@@ -120,9 +128,9 @@ export const SIGNATURE_LIFETIME_SECONDS = 3600;
 
 const usdc = (units: bigint) => `${formatUsdc(units)} QUSDC`;
 
-const networkLine = (chainId: number, rpcUrl?: string): string => {
-  const n = networkFor(chainId, rpcUrl);
-  return `${n.label}, chain ${chainId}${n.realFunds ? " (real funds)" : " (no real funds)"}`;
+const networkLine = (deps: Pick<FlowDeps, "chainId" | "network">): string => {
+  const n = deps.network ?? networkFor(deps.chainId);
+  return `${n.label}, chain ${deps.chainId}${n.realFunds ? " (real funds)" : " (no real funds)"}`;
 };
 
 async function gasPriceOf(reader: ChainReader): Promise<bigint> {
@@ -154,7 +162,7 @@ export async function planDeposit(deps: FlowDeps, amount: bigint): Promise<PlanR
   const needsApprove = allowance < amount;
   const units = (needsApprove ? ONBOARD_APPROVE_GAS : 0n) + ONBOARD_DEPOSIT_GAS;
   const gas: Gas = { units, priceWei: gasPrice, costWei: units * gasPrice };
-  const network = networkLine(deps.chainId);
+  const network = networkLine(deps);
 
   if (qie >= gas.costWei) {
     return {
@@ -256,7 +264,7 @@ export async function planExit(deps: FlowDeps, kind: ExitKind, amount: bigint, t
     { label: "Recipient", value: recipient },
     { label: "From account", value: account },
     { label: "Router", value: reader.routerAddress },
-    { label: "Network", value: networkLine(deps.chainId) },
+    { label: "Network", value: networkLine(deps) },
   ];
   const warnings = recipient !== getAddress(account) ? ["The recipient is a different address from your wallet."] : [];
 
@@ -350,7 +358,7 @@ export async function planAuthorize(deps: FlowDeps, req: AuthorizeRequest): Prom
     { label: "Expires", value: formatUtc(req.expiry) },
     ...toolLines,
     { label: "Vault", value: reader.vaultAddress },
-    { label: "Network", value: networkLine(deps.chainId) },
+    { label: "Network", value: networkLine(deps) },
   ];
   const warnings = ["The agent can spend up to the budget, within the cap per call, on these tools only, until it expires or you revoke it."];
   const input: PlanInput = { kind: "authorize", route: "wallet", agent, budget: req.budget, perCallCap: req.perCallCap, expiry: req.expiry, tools };
@@ -405,7 +413,7 @@ export async function planRevoke(deps: FlowDeps, agentText: string): Promise<Pla
     { label: "Action", value: "Revoke an agent key on the Sluice vault" },
     { label: "Agent key", value: agent },
     { label: "Vault", value: reader.vaultAddress },
-    { label: "Network", value: networkLine(deps.chainId) },
+    { label: "Network", value: networkLine(deps) },
   ];
   const warnings = ["The agent's next payment fails in the block this lands in. Payments already settled stay settled."];
   if (gas !== undefined && qie >= gas.costWei) {
@@ -422,7 +430,7 @@ export async function planRevoke(deps: FlowDeps, agentText: string): Promise<Pla
 
 const hex = (n: bigint | number): string => `0x${BigInt(n).toString(16)}`;
 
-type TypedPayload = {
+export type TypedPayload = {
   domain: Record<string, unknown>;
   types: Record<string, Array<{ name: string; type: string }>>;
   primaryType: string;
@@ -437,9 +445,10 @@ const DOMAIN_TYPE = [
 ];
 
 /** Asks the wallet to sign typed data, and checks the signature is the account's before it goes anywhere. */
-async function signTyped(deps: FlowDeps, typed: TypedPayload): Promise<string> {
+export async function signTyped(deps: FlowDeps, typed: TypedPayload): Promise<string> {
   const json = JSON.stringify({ types: { EIP712Domain: DOMAIN_TYPE, ...typed.types }, primaryType: typed.primaryType, domain: typed.domain, message: typed.message });
   let signature: unknown;
+  deps.onProgress?.({ stage: "wallet" });
   try {
     signature = await deps.wallet.request({ method: "eth_signTypedData_v4", params: [deps.account, json] });
   } catch (err) {
@@ -460,12 +469,14 @@ const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, 
 
 async function sendAndWait(deps: FlowDeps, tx: { to: string; data: string }): Promise<string> {
   let hash: unknown;
+  deps.onProgress?.({ stage: "wallet" });
   try {
     hash = await deps.wallet.request({ method: "eth_sendTransaction", params: [{ from: deps.account, to: tx.to, data: tx.data, value: "0x0" }] });
   } catch (err) {
     throw new WalletError(classifyWalletError(err), describeWalletError(err));
   }
   if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) throw new WalletError("failed", "the wallet did not return a transaction hash");
+  deps.onProgress?.({ stage: "network", hash });
   const sleep = deps.sleep ?? wait;
   for (let i = 0; i < 240; i++) {
     const receipt = await deps.reader.provider.getTransactionReceipt(hash);
@@ -479,6 +490,7 @@ async function sendAndWait(deps: FlowDeps, tx: { to: string; data: string }): Pr
 }
 
 async function relay(deps: FlowDeps, request: RelayRequest): Promise<string> {
+  deps.onProgress?.({ stage: "facilitator" });
   const res = await deps.facilitator!.relay(request);
   if (!res.ok || !res.transaction) throw new WalletError("failed", `the facilitator refused the request: ${res.detail ?? res.error ?? "no reason given"}`);
   return res.transaction;
@@ -530,6 +542,7 @@ async function executeDepositViaFacilitator(deps: FlowDeps, input: Extract<PlanI
     if (!same) throw new WalletError("failed", "the wallet signed something different from what was shown, so nothing was sent");
     signed.push(raw);
   }
+  deps.onProgress?.({ stage: "facilitator" });
   const res = await deps.facilitator!.onboard({ payer: account, approveTx: signed[0]!, depositTx: signed[1]! });
   if (!res.ok) throw new WalletError("failed", `the facilitator refused the deposit: ${res.detail ?? res.error ?? "no reason given"}`);
   return [res.topUpTx, res.approveTx, res.depositTx].filter((h): h is string => typeof h === "string");
@@ -624,6 +637,12 @@ export class FlowSession {
   private current: SessionState = "planned";
   private outcome?: FlowResult;
   private failure?: unknown;
+  private listener?: (progress: FlowProgress) => void;
+
+  /** The review dialog's way of being told where the flow is waiting. */
+  watch(listener: (progress: FlowProgress) => void): void {
+    this.listener = listener;
+  }
 
   constructor(
     readonly plan: Plan,
@@ -653,7 +672,7 @@ export class FlowSession {
     if (this.current !== "confirmed") throw new NotConfirmedError();
     this.current = "sending";
     try {
-      this.outcome = await runPlan(this.deps, this.plan);
+      this.outcome = await runPlan({ ...this.deps, onProgress: (p) => this.listener?.(p) }, this.plan);
       this.current = "done";
       return this.outcome;
     } catch (err) {

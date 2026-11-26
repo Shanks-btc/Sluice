@@ -16,9 +16,13 @@ export type FacilitatorEnv = {
   network: "mainnet" | "testnet" | "local";
   chainId: number;
   rpcUrl: string;
+  /** True when SLUICE_RPC_URL names the endpoint (or the node is local): it is used as given. False: QIE's public endpoints are probed and the first healthy one is used. */
+  rpcNamed: boolean;
   router: string;
   /** A function, so that logging or serialising this object never shows the key. */
   relayerKey: () => string;
+  /** The bearer token for the private metrics path, as a function so that it is never printed. Undefined: the path does not exist. */
+  metricsToken: () => string | undefined;
   port: number;
   caps: Caps;
   /** Where the queue's journal lives. Required on mainnet and testnet: a queue kept only in memory is lost by a restart. */
@@ -92,6 +96,27 @@ export function parseFlag(name: string, text: string | undefined): boolean {
   throw new EnvError(`refusing to start: ${name} must be 1 or 0`);
 }
 
+/**
+ * A QUSDC cap that can only be lowered: "0.05" -> 50000 units. Above the default it stops the start, so none of these settings can
+ * widen what the service accepts, whatever the cap's ceiling in code is.
+ */
+function loweredQusdc(name: string, text: string | undefined, fallback: bigint): bigint | undefined {
+  const raw = text?.trim();
+  if (!raw) return undefined;
+  const m = /^(\d{1,12})(?:\.(\d{1,6}))?$/.exec(raw);
+  const units = m ? BigInt(m[1] as string) * 1_000_000n + BigInt((m[2] ?? "").padEnd(6, "0") || "0") : 0n;
+  if (units === 0n) throw new EnvError(`refusing to start: ${name} must be a plain amount of QUSDC above zero, with at most six decimals`);
+  if (units > fallback) throw new EnvError(`refusing to start: ${name} can only lower the cap, which is ${fallback / 1_000_000n} QUSDC`);
+  return units;
+}
+
+/** The settings that lower the QUSDC caps, and the cap each one lowers. */
+const QUSDC_CAPS = [
+  ["SLUICE_FACILITATOR_MAX_ONBOARD_QUSDC", "maxOnboardAmount"],
+  ["SLUICE_FACILITATOR_PAYER_DAILY_QUSDC", "payerDailyAmount"],
+  ["SLUICE_FACILITATOR_DAILY_QUSDC", "globalDailyAmount"],
+] as const;
+
 function whole(name: string, text: string | undefined, fallback: number, min: number, max: number): number {
   const raw = text?.trim();
   if (!raw) return fallback;
@@ -142,6 +167,10 @@ export function readEnv(env: Env): FacilitatorEnv {
   } else if (requested.maxTopUpWei !== undefined && requested.maxTopUpWei > DEFAULT_CAPS.topUpPerAddressDailyWei) {
     requested.topUpPerAddressDailyWei = requested.maxTopUpWei; // one top-up of the size asked for, per address per day
   }
+  for (const [name, cap] of QUSDC_CAPS) {
+    const lowered = loweredQusdc(name, env[name], DEFAULT_CAPS[cap]);
+    if (lowered !== undefined) requested[cap] = lowered;
+  }
   let caps: Caps;
   try {
     caps = resolveCaps(requested);
@@ -161,12 +190,19 @@ export function readEnv(env: Env): FacilitatorEnv {
   const port = Number(env.SLUICE_FACILITATOR_PORT?.trim() || 8402);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new EnvError("refusing to start: SLUICE_FACILITATOR_PORT is not a port");
 
+  const metrics = env.SLUICE_FACILITATOR_METRICS_TOKEN?.trim() || undefined;
+  if (metrics !== undefined && !/^[A-Za-z0-9._~+/=-]{24,200}$/.test(metrics)) {
+    throw new EnvError("refusing to start: SLUICE_FACILITATOR_METRICS_TOKEN must be 24 to 200 characters of letters, digits and . _ ~ + / = -");
+  }
+
   const out: FacilitatorEnv = {
     network,
     chainId: CHAIN[network],
     rpcUrl,
+    rpcNamed: Boolean(env.SLUICE_RPC_URL?.trim()) || network === "local",
     router,
     relayerKey: () => key,
+    metricsToken: () => metrics,
     port,
     caps,
     statePath,
@@ -186,5 +222,6 @@ export function readEnv(env: Env): FacilitatorEnv {
     logLevel: level,
   };
   Object.defineProperty(out, "relayerKey", { enumerable: false, value: out.relayerKey });
+  Object.defineProperty(out, "metricsToken", { enumerable: false, value: out.metricsToken });
   return out;
 }

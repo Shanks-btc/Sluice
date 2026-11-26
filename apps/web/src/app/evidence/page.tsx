@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
-import { EvidenceTable, SummaryView } from "../../components/evidence-view";
+import { ContractsNote, EvidenceTable, SummaryView } from "../../components/evidence-view";
 import { Prose } from "../../components/doc-view";
 import { PageHead } from "../../components/page-head";
 import { content } from "../../lib/content";
 import { loadConfigFromProcess } from "../../lib/config";
+import { ownRowsPhrase } from "../../lib/own-rows";
 import { renderMarkdown } from "../../lib/markdown";
 import { cached, computeSummary, safeRpcUrl } from "../../lib/summary-handler";
 import type { SummaryAnswer } from "../../lib/summary-handler";
@@ -25,14 +26,15 @@ export default async function EvidencePage() {
     <>
       <PageHead eyebrow="Evidence" title="What a transaction on QIE shows">
         <p>
-          Sluice claims what a transaction can show. These are the rows in <span className="mono">docs/EVIDENCE.md</span>. Verified rows: mainnet {content.evidence.mainnet}, testnet {content.evidence.testnet}.
+          Sluice claims what a transaction can show. These are the rows in <span className="mono">docs/EVIDENCE.md</span>. Verified rows: mainnet {content.evidence.mainnet}{ownRowsPhrase(content.evidence.mainnet, content.evidence.own.mainnet)}; testnet {content.evidence.testnet}{ownRowsPhrase(content.evidence.testnet, content.evidence.own.testnet)}.
         </p>
       </PageHead>
       <div className="wrap stack gap-xl">
-        <EvidenceTable network="mainnet" rows={content.evidence.rows} />
-        <EvidenceTable network="testnet" rows={content.evidence.rows} />
+        <EvidenceTable network="mainnet" rows={content.evidence.rows} own={content.ownAddresses} />
+        <EvidenceTable network="testnet" rows={content.evidence.rows} own={content.ownAddresses} />
+        <ContractsNote rows={content.evidence.rows} router={config.router} vault={config.vault} network={config.network} shown={content.vault} />
         <SummaryView answer={answer} founder={{ version: founder.version, wallets: founder.wallets.length }} />
-        <details className="stack" open>
+        <details className="disclosure" open>
           <summary className="h-section summary-title">How a row gets here</summary>
           <Prose html={intro.html} source="docs/EVIDENCE.md" />
         </details>

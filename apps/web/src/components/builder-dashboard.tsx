@@ -8,6 +8,7 @@ import { formatUsdc, isAddress, parseAmountInput, shortAddress, shortHash } from
 import { explorerTxUrl } from "../lib/networks";
 import { readBuilder } from "../lib/reads";
 import type { BuilderView } from "../lib/reads";
+import { BuilderTools } from "./builder-tools";
 import { FlowDialog } from "./flow-dialog";
 import { useConfig, useReader, useWallet } from "./providers";
 import { useFlowDeps } from "./use-flow";
@@ -18,7 +19,7 @@ export function NotConfigured({ what }: { what: string }) {
     <div className="empty" data-testid="not-configured">
       <h3>Contracts not configured</h3>
       <p>
-        This site has no router and vault address set, so {what} has nothing to read. The deployer sets <code>NEXT_PUBLIC_ROUTER_ADDRESS</code> and <code>NEXT_PUBLIC_VAULT_ADDRESS</code>. No contracts have been deployed to a QIE network yet.
+        This site has no router and vault address set, so {what} has nothing to read. The deployer sets <code>NEXT_PUBLIC_ROUTER_ADDRESS</code> and <code>NEXT_PUBLIC_VAULT_ADDRESS</code>. The addresses of a deployed router are listed on the evidence page, if there are any.
       </p>
     </div>
   );
@@ -217,11 +218,15 @@ export function BuilderDashboard() {
           ) : null}
         </>
       ) : null}
+      {readerState.status === "ready" && reader ? <BuilderTools reader={reader} account={wallet.status === "connected" && wallet.network === "ok" ? wallet.account : null} deps={deps} viewing={isAddress(lookup) ? lookup : null} /> : null}
       <FlowDialog
         session={session}
         onClose={() => {
           setSession(null);
           void load(lookup);
+        }}
+        onRetry={(plan) => {
+          if (deps) setSession(new FlowSession(plan, deps));
         }}
       />
     </div>

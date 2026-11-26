@@ -20,7 +20,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { ERRORS } from "@sluice/sdk";
 import { silentLogger } from "@sluice/sdk";
 import type { Logger } from "@sluice/sdk";
-import { RateLimiter, clientAddress } from "@sluice/sdk";
+import { RateLimiter, RequestCounter, bearerMatches, clientAddress, renderGauges, requestIdFor, routeLabel } from "@sluice/sdk";
 import type { Facilitator } from "./service";
 
 export const DEFAULT_MAX_BODY_BYTES = 64 * 1024;
@@ -74,6 +74,8 @@ export type ServerOptions = CorsOptions & {
   payerLimit?: RateLimit;
   /** How many proxies in front of this service append to X-Forwarded-For. Default 0: the header is not believed. */
   trustedProxyHops?: number;
+  /** The bearer token for GET /internal/metrics. With none, that path does not exist (it answers 404 like any unknown path). */
+  metricsToken?: string;
   logger?: Logger;
   /** The limiters' clock, in milliseconds. For tests. */
   now?: () => number;
@@ -93,9 +95,36 @@ export function corsHeaders(origin: string | undefined, options: CorsOptions): R
     "access-control-allow-origin": origin,
     "access-control-allow-methods": "GET, POST, OPTIONS",
     "access-control-allow-headers": "content-type",
+    "access-control-expose-headers": "x-request-id, retry-after",
     "access-control-max-age": "600",
     vary: "Origin",
   };
+}
+
+export const METRICS_PATH = "/internal/metrics";
+const KNOWN_ROUTES = ["/health", "/status", "/verify", "/settle", "/onboard", "/relay", METRICS_PATH] as const;
+
+type FacilitatorMetrics = Awaited<ReturnType<Facilitator["metrics"]>>;
+
+/** The metrics as text, one gauge or counter per line. Counts, ages and the relayer's own balance: no payer, amount or key. */
+export function renderFacilitatorMetrics(m: FacilitatorMetrics, counter: RequestCounter): string {
+  const gauges = [
+    ...(Object.entries(m.intents) as Array<[string, number]>).map(([status, value]) => ({ name: "sluice_facilitator_intents", labels: { status }, value, help: "Intents in each state, from the journal." })),
+    { name: "sluice_facilitator_oldest_queued_age_seconds", value: m.oldestQueuedAgeSeconds, help: "Age of the oldest intent still waiting for a batch." },
+    { name: "sluice_facilitator_in_flight", value: m.inFlight, help: "Intents in a batch whose outcome is not yet recorded." },
+    { name: "sluice_facilitator_oldest_in_flight_age_seconds", value: m.oldestInFlightAgeSeconds },
+    { name: "sluice_facilitator_kill_switch", value: m.killSwitch, help: "1 while the kill switch is on." },
+    { name: "sluice_facilitator_low_balance", value: m.lowBalance, help: "1 while the relayer holds less QIE than its low-balance threshold." },
+    { name: "sluice_facilitator_draining", value: m.draining },
+    { name: "sluice_facilitator_store_healthy", value: m.storeHealthy, help: "1 while the journal can record what it is told." },
+    { name: "sluice_facilitator_relayer_balance_wei", value: BigInt(m.relayerBalanceWei) },
+    { name: "sluice_facilitator_budget_wei", value: BigInt(m.budgetWei), help: "The relayer's QIE budget for the day." },
+    { name: "sluice_facilitator_spent_wei", value: BigInt(m.spentWei) },
+    { name: "sluice_facilitator_alerts", value: m.alerts },
+    { name: "sluice_facilitator_last_settled_block", value: m.lastSettledBlock },
+    { name: "sluice_facilitator_last_settled_timestamp_seconds", value: m.lastSettledAt },
+  ];
+  return `${[...counter.lines("sluice_facilitator_requests_total"), ...renderGauges(gauges)].join("\n")}\n`;
 }
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;
@@ -125,9 +154,20 @@ export function createServer(facilitator: Facilitator, options: ServerOptions = 
   const ipLimiter = new RateLimiter(ip.max, ip.windowMs, 10_000, options.now);
   const payerLimiter = new RateLimiter(pay.max, pay.windowMs, 10_000, options.now);
   const hops = options.trustedProxyHops ?? 0;
+  const counter = new RequestCounter();
 
   const server = createHttpServer((req, res) => {
     void (async () => {
+      // Every request has an id, which the caller may supply (if it is well formed) and which comes back in x-request-id and in the log
+      // line, so a report from a user ("this request, at this time") finds its line.
+      const started = Date.now();
+      const requestId = requestIdFor(req.headers["x-request-id"]);
+      res.setHeader("x-request-id", requestId);
+      const route = routeLabel((req.url ?? "/").split("?")[0] ?? "/", KNOWN_ROUTES);
+      res.once("finish", () => {
+        counter.record(route, res.statusCode);
+        log.info("request", { requestId, method: req.method, route, status: res.statusCode, ms: Date.now() - started });
+      });
       const allow = corsHeaders(typeof req.headers.origin === "string" ? req.headers.origin : undefined, options);
       const send_ = (status: number, body: unknown, extra: Record<string, string> = {}) => send(res, status, body, { ...allow, ...extra });
       const limited = (who: "address" | "payer", retryAfterSeconds: number, where: string, key: string) => {
@@ -141,6 +181,16 @@ export function createServer(facilitator: Facilitator, options: ServerOptions = 
         const byIp = ipLimiter.hit(client);
         if (!byIp.ok) return limited("address", byIp.retryAfterSeconds, path, client);
 
+        // The private metrics path. It does not exist unless a token is set, it needs that token, and it never carries a CORS header, so
+        // no web page can read it.
+        if (path === METRICS_PATH) {
+          if (!options.metricsToken) return send(res, 404, { error: "not_found" });
+          if (req.method !== "GET") return send(res, 405, { error: "method_not_allowed" }, { allow: "GET" });
+          if (!bearerMatches(req.headers.authorization, options.metricsToken)) return send(res, 401, { error: "unauthorized" }, { "www-authenticate": 'Bearer realm="sluice-metrics"' });
+          const text = renderFacilitatorMetrics(await facilitator.metrics(), counter);
+          res.writeHead(200, { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" });
+          return void res.end(text);
+        }
         if (req.method === "OPTIONS") {
           if (Object.keys(allow).length === 0) return send(res, 404, { error: "not_found" });
           res.writeHead(204, { ...allow, "cache-control": "no-store" });

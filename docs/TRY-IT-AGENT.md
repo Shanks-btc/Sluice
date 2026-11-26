@@ -80,7 +80,7 @@ You hold the money. You deposit QUSDC in the router, which keeps it as a balance
 6. Make one paid call with the scripted client.
 
    ```powershell
-   pnpm client:smoke --config .\sluice.config.json --tool summarise --args '{"url":"https://example.com"}'
+   pnpm client:smoke --config .\sluice.config.json --tool summarise --arg url=https://example.com
    ```
 
    Expect six steps and `payment response: success true`. The reply says the payment is `queued`: the facilitator has it and will send a batch to the router within a few seconds. Ask the facilitator where it is:

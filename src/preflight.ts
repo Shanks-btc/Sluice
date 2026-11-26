@@ -9,6 +9,7 @@ import { NetworkError, NETWORKS } from "./evidence";
 import type { Network, Rpc } from "./evidence";
 import { MEASURED_GAS, SMOKE_GAS_TOTAL, costWei } from "./gas-figures";
 import { MAX_GAS_PRICE_WEI, QUSDC_ADDRESS } from "./guard";
+import { RISKS_FACTS, compareWithRisks, readQusdcFacts } from "./qusdc-facts";
 import { RpcRefused, readOnlyRpc } from "./readrpc";
 import { formatQusdc } from "./units";
 
@@ -20,6 +21,7 @@ export const PREFLIGHT_READ_ONLY_METHODS: ReadonlySet<string> = new Set([
   "eth_getBalance",
   "eth_getCode",
   "eth_call",
+  "eth_getStorageAt",
 ]);
 
 export type CheckStatus = "PASS" | "WARN" | "FAIL" | "SKIP";
@@ -49,7 +51,26 @@ export type PreflightDeps = {
   rpc?: Rpc;
   /** Reads an explorer address with a GET, for the reachability check. */
   explorerReachable?: () => Promise<boolean>;
+  /** On mainnet, re-reads QUSDC's role facts and compares them with docs/RISKS.md. Opt-in, so a caller that has a mocked node is not asked more. */
+  qusdcRoles?: (rpc: Rpc) => Promise<Check>;
 };
+
+/**
+ * QUSDC's roles, read again. A warning, never a failure: a role holder that has changed is a reason to read docs/RISKS.md before putting
+ * money in, and not a reason the deploy cannot work.
+ */
+export async function qusdcRolesCheck(rpc: Rpc): Promise<Check> {
+  const name = "QUSDC roles";
+  try {
+    const facts = await readQusdcFacts(rpc);
+    const cmp = compareWithRisks(facts);
+    return cmp.matches
+      ? pass(name, `at block ${facts.block}: VAULT_ROLE is held by ${RISKS_FACTS.vaultRoleHolder} and DEFAULT_ADMIN_ROLE by ${RISKS_FACTS.adminHolder}, the vault role's holder can burn, and the token is not upgradeable, as docs/RISKS.md says; total supply ${formatQusdc(facts.totalSupply)} QUSDC (run pnpm live:facts for all of it)`)
+      : warn(name, `differs from docs/RISKS.md at block ${facts.block}: ${cmp.differences.join("; ")}`);
+  } catch {
+    return warn(name, "could not be read, so docs/RISKS.md was not re-checked (run pnpm live:facts)");
+  }
+}
 
 export type PreflightResult = { checks: Check[]; go: boolean; failed: string[]; warned: string[] };
 
@@ -160,6 +181,9 @@ export async function preflight(input: PreflightInput, deps: PreflightDeps = {})
       checks.push(fail("Token", "the token could not be read"));
     }
   }
+
+  // 4b. On mainnet, QUSDC's roles against what docs/RISKS.md says (when the caller asks for it).
+  if (input.network === "mainnet" && deps.qusdcRoles) checks.push(await deps.qusdcRoles(rpc));
 
   // 5. Balances.
   const balance = async (address: string): Promise<bigint> => BigInt((await rpc("eth_getBalance", [getAddress(address), "latest"])) as string);

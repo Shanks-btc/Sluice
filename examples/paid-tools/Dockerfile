@@ -34,4 +34,6 @@ EXPOSE 8403
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.SLUICE_TOOLS_PORT||8403)+'/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 STOPSIGNAL SIGTERM
+# If the platform sets PORT (Railway does), the server listens on it; otherwise on SLUICE_TOOLS_PORT. It writes no file and needs no volume.
+ENTRYPOINT ["/bin/sh", "-c", "if [ -n \"$PORT\" ]; then export SLUICE_TOOLS_PORT=\"$PORT\"; fi; exec \"$@\"", "sluice-tool-server"]
 CMD ["node", "dist/cli.js", "--http"]

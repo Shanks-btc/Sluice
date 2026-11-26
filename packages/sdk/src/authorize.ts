@@ -3,7 +3,7 @@
 // no QIE. Only the owner's key can make this signature, which is why an agent can never raise its own budget.
 import { getAddress } from "ethers";
 import type { TypedDataDomain } from "ethers";
-import { CHAIN_ID } from "./protocol";
+import { CHAIN_ID, routerDomain } from "./protocol";
 import type { TypedSigner } from "./protocol";
 
 export const VAULT_DOMAIN_NAME = "SluiceAgentVault";
@@ -59,6 +59,57 @@ export async function signAuthorize(
     perCallCap: args.grant.perCallCap,
     expiry: args.grant.expiry,
     tools: args.tools,
+    nonce: args.nonce,
+    deadline: args.deadline,
+  });
+}
+
+// A withdrawal or a refund signed without sending a transaction: a builder (or a payer) who holds no QIE signs an EIP-712 `Withdraw` (or
+// `Refund`) for the router, and a facilitator submits it with `withdrawBySig` (or `refundBySig`). The relayer fee is always zero: the
+// facilitator asks for nothing. The web app signs these same messages (apps/web/src/lib/flows.ts), and docs/SPEC.md has their digests.
+export const WITHDRAW_TYPES: Record<string, Array<{ name: string; type: string }>> = {
+  Withdraw: [
+    { name: "account", type: "address" },
+    { name: "to", type: "address" },
+    { name: "amount", type: "uint256" },
+    { name: "relayerFee", type: "uint256" },
+    { name: "nonce", type: "bytes32" },
+    { name: "deadline", type: "uint256" },
+  ],
+};
+
+export const REFUND_TYPES: Record<string, Array<{ name: string; type: string }>> = {
+  Refund: [
+    { name: "payer", type: "address" },
+    { name: "to", type: "address" },
+    { name: "amount", type: "uint256" },
+    { name: "relayerFee", type: "uint256" },
+    { name: "nonce", type: "bytes32" },
+    { name: "deadline", type: "uint256" },
+  ],
+};
+
+export type ExitArgs = { account: string; to: string; amount: bigint; nonce: string; deadline: bigint };
+
+/** Signs a withdrawal of `amount` of the account's earnings to `to`. `nonce` is 32 random bytes: it makes the signature usable once. */
+export async function signWithdraw(signer: TypedSigner, router: string, args: ExitArgs, chainId: number = CHAIN_ID): Promise<string> {
+  return signer.signTypedData(routerDomain(router, chainId), WITHDRAW_TYPES, {
+    account: getAddress(args.account),
+    to: getAddress(args.to),
+    amount: args.amount,
+    relayerFee: 0n,
+    nonce: args.nonce,
+    deadline: args.deadline,
+  });
+}
+
+/** Signs a refund of `amount` of the account's prepaid balance to `to`. */
+export async function signRefund(signer: TypedSigner, router: string, args: ExitArgs, chainId: number = CHAIN_ID): Promise<string> {
+  return signer.signTypedData(routerDomain(router, chainId), REFUND_TYPES, {
+    payer: getAddress(args.account),
+    to: getAddress(args.to),
+    amount: args.amount,
+    relayerFee: 0n,
     nonce: args.nonce,
     deadline: args.deadline,
   });

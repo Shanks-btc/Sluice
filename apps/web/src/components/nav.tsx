@@ -14,6 +14,7 @@ export const NAV_LINKS = [
   { href: "/wallet", label: "Wallet" },
   { href: "/docs", label: "Docs" },
   { href: "/evidence", label: "Evidence" },
+  { href: "/status", label: "Status" },
 ] as const;
 
 function Sun() {

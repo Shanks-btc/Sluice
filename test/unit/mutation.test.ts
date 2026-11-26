@@ -20,6 +20,13 @@ describe("Mutation check: the engine", () => {
     expect(() => applyMutation("x > 1", { ...base, replace: "x > 1" })).to.throw(MutationError, /does nothing/);
   });
 
+  it("matches and changes a file with CRLF line endings, as a checkout with git's autocrlf has, and keeps them", () => {
+    const multi: Mutation = { ...base, find: "if (x > 1)\n  y();", replace: "if (x >= 1)\n  y();" };
+    expect(applyMutation("a;\r\nif (x > 1)\r\n  y();\r\nb;\r\n", multi)).to.equal("a;\r\nif (x >= 1)\r\n  y();\r\nb;\r\n");
+    expect(applyMutation("a;\nif (x > 1)\n  y();\nb;\n", multi)).to.equal("a;\nif (x >= 1)\n  y();\nb;\n");
+    expect(() => applyMutation("a;\r\nnothing\r\n", multi)).to.throw(MutationError, /not in/);
+  });
+
   const scratch = () => {
     const dir = mkdtempSync(join(tmpdir(), "sluice-mut-test-"));
     mkdirSync(dir, { recursive: true });

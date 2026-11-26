@@ -39,7 +39,7 @@ Run this before the applications. If it fails, an application will fail the same
 
 ```powershell
 $env:SLUICE_AGENT_KEY = Get-Content .\agent.key
-pnpm client:smoke --config .\sluice.config.json --tool contract_lookup --args '{"address":"0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5"}'
+pnpm client:smoke --config .\sluice.config.json --tool contract_lookup --arg address=0x3F43DA82eC9A4f5285F10FaF1F26EcA7319E5DA5
 Remove-Item Env:SLUICE_AGENT_KEY
 ```
 

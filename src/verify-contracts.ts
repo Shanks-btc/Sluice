@@ -1,4 +1,7 @@
-// Getting the router's and the vault's source verified on the explorer, so that anyone can read what runs at their addresses.
+// Getting the router's source verified on the explorer, so that anyone can read what runs at its address. The vault is built the same way
+// (buildInput works for any of the contracts), and its files are written for a reader to build it again; live:verify does not submit
+// it. What QIE's explorer answered when it was submitted by hand is in docs/EXPLORER-VAULT-INVESTIGATION.md. Its code is checked,
+// without the explorer, by src/vaultcheck.ts.
 //
 // Three parts, none of which holds a key or sends a transaction:
 //   - buildInput: the standard JSON input the compiler used (from Hardhat's build info), cut down to the files the contract needs, with
@@ -6,12 +9,13 @@
 //   - flatten: the same files as one source file, for explorers that take a single file (a manual fallback);
 //   - submitVerification: a POST to the explorer's verifysourcecode endpoint (Blockscout, Etherscan-compatible), then polling its status.
 //
-// What the explorer does with a submission is the explorer's own matter, and this repository has not been able to try it against the real
-// one: the tests run it against a stand-in that holds the endpoint's documented shape. The manual route (docs/MAINNET-RUNBOOK.md) does
-// not depend on this file's POST.
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+// What the explorer does with a submission is the explorer's own matter. The tests run this against a stand-in that holds the endpoint's
+// documented shape; submitVerification's POST was tried against the real explorer on 2026-11-26, for one contract
+// (docs/EXPLORER-VAULT-INVESTIGATION.md). The manual route (docs/MAINNET-RUNBOOK.md) does not depend on this file's POST.
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import { AbiCoder, getAddress } from "ethers";
+import { safeReaddir } from "./secret-paths";
 
 export class VerifyError extends Error {
   constructor(message: string) {
@@ -47,7 +51,7 @@ type BuildInfo = {
 export function buildInput(root: string, path: string, name: string): BuildInput {
   const dir = join(root, "artifacts", "build-info");
   if (!existsSync(dir)) throw new VerifyError("there is no artifacts/build-info: run pnpm compile first");
-  const candidates = readdirSync(dir)
+  const candidates = safeReaddir(dir)
     .filter((f) => f.endsWith(".json"))
     .map((f) => ({ file: join(dir, f), mtime: statSync(join(dir, f)).mtimeMs }))
     .sort((a, b) => b.mtime - a.mtime);

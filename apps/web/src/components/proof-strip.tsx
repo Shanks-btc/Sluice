@@ -7,6 +7,7 @@
 import type { EvidenceRow } from "../../../../src/evidence";
 import { MAINNET, explorerTxUrl } from "../lib/networks";
 import { shortAddress, shortHash } from "../lib/format";
+import { countOwn, ownRowsPhrase, ownRowsSentence } from "../lib/own-rows";
 
 export type ForkSample = {
   source: "local fork";
@@ -18,7 +19,8 @@ export type ForkSample = {
 export const EMPTY_MAINNET = "No mainnet transactions recorded yet";
 export const FORK_LABEL = "Sample from a local fork — not mainnet";
 
-export function ProofStrip({ rows, sample, limit = 6 }: { rows: readonly EvidenceRow[]; sample?: ForkSample | null; limit?: number }) {
+/** `own` is the founder list's addresses: beside the transactions it is said how many of them are the project's own. */
+export function ProofStrip({ rows, sample, limit = 6, own }: { rows: readonly EvidenceRow[]; sample?: ForkSample | null; limit?: number; own: readonly string[] }) {
   const mainnet = rows.filter((r) => r.network === "mainnet" && /^0x[0-9a-fA-F]{64}$/.test(r.hash));
   const testnet = rows.filter((r) => r.network === "testnet" && /^0x[0-9a-fA-F]{64}$/.test(r.hash));
   const shown = mainnet.slice(-limit).reverse();
@@ -54,9 +56,14 @@ export function ProofStrip({ rows, sample, limit = 6 }: { rows: readonly Evidenc
           {EMPTY_MAINNET}. A row is added to <a className="link" href="/evidence">the evidence file</a> after a transaction has been read back from the chain.
         </p>
       )}
+      {mainnet.length > 0 ? (
+        <p className="muted proof-note" data-testid="proof-own">
+          {ownRowsSentence("mainnet", mainnet.length, countOwn(mainnet, own))}
+        </p>
+      ) : null}
       {testnet.length > 0 ? (
         <p className="muted proof-note">
-          {testnet.length} testnet transaction{testnet.length === 1 ? "" : "s"} listed on <a className="link" href="/evidence">the evidence page</a>, labelled as testnet.
+          {testnet.length} testnet transaction{testnet.length === 1 ? "" : "s"}{ownRowsPhrase(testnet.length, countOwn(testnet, own))} listed on <a className="link" href="/evidence">the evidence page</a>, labelled as testnet.
         </p>
       ) : null}
       {mainnet.length === 0 && sample ? (

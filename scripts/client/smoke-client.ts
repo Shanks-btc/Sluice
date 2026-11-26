@@ -2,7 +2,7 @@
 // prints every step. Use it to see the whole path work, from a client through the proxy to a tool server and a facilitator, before a person
 // tries it from an MCP application.
 //
-//   SLUICE_AGENT_KEY=0x... pnpm client:smoke --config sluice.config.json --tool contract_lookup --args '{"address":"0x..."}'
+//   SLUICE_AGENT_KEY=0x... pnpm client:smoke --config sluice.config.json --tool contract_lookup --arg address=0x...
 //   SLUICE_AGENT_KEY=0x... pnpm client:smoke --config sluice.config.json --list-only
 //
 // This is a script, and it is the only thing that has run this path. It is not an MCP application, so a run of it says nothing about how an
@@ -10,21 +10,25 @@
 //
 //   --config     the proxy's config file (or SLUICE_CONFIG)
 //   --tool       the tool to call; with no --tool the script only lists the tools
-//   --args       the tool's arguments, as JSON (default {})
+//   --arg        one argument of the tool as name=value, text only; repeat it for each. The form to use in PowerShell.
+//   --args       the tool's arguments, as JSON (default {}). Windows PowerShell 5 strips the double quotes out of such an argument on
+//                its way to the program, so there it has to be written with \" for each quote, or given with --arg instead.
 //   --list-only  list the tools and stop
 //   --proxy      the proxy program (default packages/proxy/dist/cli.js, which pnpm build makes)
 //
 // Exit code 0: it ran, and a paid call, if asked for, was paid and answered. 1: the call was refused or failed, or the proxy could not
 // start. 2: the command was wrong.
+import { exitWith } from "../../src/exit";
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { PAYMENT_RESPONSE_META_KEY, PRICING_META_KEY, cutSecrets } from "@sluice/sdk";
+import { PAYMENT_RESPONSE_META_KEY, PRICING_META_KEY, cutSecrets, describeSelection, resolveEndpoint } from "@sluice/sdk";
 
 export type Env = Record<string, string | undefined>;
 export type SmokeIo = {
   log?: (line: string) => void;
+  fetchImpl?: typeof fetch;
   /** The program to start as the proxy. Defaults to the built one. */
   command?: { command: string; args: string[]; cwd?: string };
 };
@@ -51,10 +55,17 @@ export async function main(argv: string[], env: Env = process.env, io: SmokeIo =
   let client: Client | undefined;
   try {
     const args: Record<string, string | boolean> = {};
+    const named: Record<string, string> = {};
     for (let i = 0; i < argv.length; i++) {
       const flag = argv[i] as string;
       if (flag === "--list-only") args["list-only"] = true;
-      else if (VALUE_FLAGS.has(flag)) {
+      else if (flag === "--arg") {
+        const m = /^([A-Za-z_][A-Za-z0-9_]{0,63})=(.*)$/.exec(argv[++i] ?? "");
+        if (!m) throw new UsageError("--arg is name=value, like --arg address=0x...");
+        const name = m[1] as string;
+        if (Object.prototype.hasOwnProperty.call(named, name)) throw new UsageError(`--arg ${name} was given twice`);
+        named[name] = m[2] as string;
+      } else if (VALUE_FLAGS.has(flag)) {
         const value = argv[++i];
         if (value === undefined || value.startsWith("--")) throw new UsageError(`${flag} needs a value`);
         args[flag.slice(2)] = value;
@@ -65,24 +76,38 @@ export async function main(argv: string[], env: Env = process.env, io: SmokeIo =
     if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) throw new UsageError("set SLUICE_AGENT_KEY to the agent's session key (a 0x-prefixed 32-byte hex key)");
     const tool = typeof args.tool === "string" ? args.tool : undefined;
     if (!tool && !args["list-only"]) throw new UsageError("give --tool to make a paid call, or --list-only to list the tools");
-    let toolArgs: Record<string, unknown> = {};
+    let toolArgs: Record<string, unknown> = { ...named };
     if (typeof args.args === "string") {
+      if (Object.keys(named).length > 0) throw new UsageError("give the arguments with --arg or with --args, not both");
       try {
         const parsed = JSON.parse(args.args) as unknown;
         if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("not an object");
         toolArgs = parsed as Record<string, unknown>;
       } catch {
-        throw new UsageError("--args must be a JSON object, like '{\"address\":\"0x...\"}'");
+        throw new UsageError("--args must be a JSON object, like '{\"address\":\"0x...\"}' (in PowerShell 5 use --arg name=value instead, which it does not alter)");
       }
     }
     const command = io.command ?? { command: process.execPath, args: [resolve(typeof args.proxy === "string" ? args.proxy : join(ROOT, "packages", "proxy", "dist", "cli.js")), "--config", resolve(config)], cwd: ROOT };
     if (!io.command && !existsSync(command.args[0] as string)) throw new UsageError("the proxy program was not found: run pnpm build first, or give --proxy");
 
     say("scripted MCP client run (the official MCP SDK client). It is a script, not an MCP application.");
+    // Neither this client nor the proxy reads the chain to make a call, but a program the proxy runs next to it may. When a QIE network is
+    // named, probe its endpoints, say which one answers, and hand that one to the child as SLUICE_RPC_URL.
+    let rpcForChild = env.SLUICE_RPC_URL?.trim() || undefined;
+    const net = env.SLUICE_NETWORK?.trim();
+    if (net === "mainnet" || net === "testnet") {
+      try {
+        const sel = await resolveEndpoint(net, env.SLUICE_RPC_URL, { fetchImpl: io.fetchImpl });
+        say(describeSelection(sel));
+        rpcForChild = sel.url;
+      } catch {
+        say(`no RPC endpoint answered for ${net}; the call itself does not need one, so the run goes on`);
+      }
+    }
     say(`step 1: start the payment proxy as a child process: ${command.command === process.execPath ? "node" : command.command} ${short(command.args.map((a) => (a.length > 60 ? "…" + a.slice(-40) : a)).join(" "), 200)}`);
     client = new Client({ name: "sluice-scripted-client", version: "0.1.0" });
     // The child gets a small environment: where to find programs, and the one variable that holds the session key.
-    await client.connect(new StdioClientTransport({ command: command.command, args: command.args, cwd: command.cwd ?? ROOT, env: { ...inherited(), SLUICE_AGENT_KEY: key }, stderr: "ignore" }));
+    await client.connect(new StdioClientTransport({ command: command.command, args: command.args, cwd: command.cwd ?? ROOT, env: { ...inherited(), SLUICE_AGENT_KEY: key, ...(rpcForChild ? { SLUICE_RPC_URL: rpcForChild } : {}) }, stderr: "ignore" }));
     say("step 2: connected over stdio");
 
     const listed = await client.listTools();
@@ -137,10 +162,10 @@ export async function main(argv: string[], env: Env = process.env, io: SmokeIo =
 
 if (require.main === module) {
   main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+    (code) => exitWith(code),
     () => {
       console.error("client:smoke failed");
-      process.exit(1);
+      exitWith(1);
     },
   );
 }

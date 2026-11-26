@@ -21,6 +21,14 @@ export type ChainReader = {
 
 export class ConfigMismatch extends Error {}
 
+/** The node did not answer (every endpoint tried was down or too slow). Not a wrong address: the page says so differently. */
+export class NodeUnreachable extends Error {}
+
+const nodeDown = (err: unknown): boolean => {
+  const e = err as { code?: unknown; message?: unknown } | null;
+  return ["NETWORK_ERROR", "TIMEOUT", "SERVER_ERROR"].includes(String(e?.code)) || /timed out|fetch failed|failed to fetch|econnrefused|network error|did not answer/i.test(String(e?.message ?? ""));
+};
+
 /** Opens the contracts and checks the configured vault is the one the router uses, so a wrong address is caught before anything is shown. */
 export async function openReader(provider: Provider, cfg: ReaderConfig): Promise<ChainReader> {
   const routerAddress = getAddress(cfg.router);
@@ -33,6 +41,7 @@ export async function openReader(provider: Provider, cfg: ReaderConfig): Promise
     tokenAddress = getAddress(token);
   } catch (err) {
     if (err instanceof ConfigMismatch) throw err;
+    if (nodeDown(err)) throw new NodeUnreachable("the QIE network nodes did not answer, so the contracts could not be read. Try again in a moment");
     throw new ConfigMismatch("the configured router could not be read on this network");
   }
   return {

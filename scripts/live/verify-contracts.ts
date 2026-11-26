@@ -1,20 +1,29 @@
-// Gets the router's and the vault's source verified on the explorer, and checks that the explorer says so.
+// Gets the router's source verified on the explorer, and checks that the explorer says so. The vault is not submitted: see below.
 //
 //   SLUICE_NETWORK=mainnet SLUICE_APPROVE=verify pnpm live:verify --deployment deployment.json
-//   SLUICE_NETWORK=mainnet pnpm live:verify --check-only          (only asks the explorer whether it shows verified source)
+//   SLUICE_NETWORK=mainnet pnpm live:verify --check-only          (only asks the explorer whether it shows verified source for the router)
 //   SLUICE_NETWORK=mainnet pnpm live:verify --prepare-only        (only writes the files for the manual route)
 //
 // THE FOUNDER RUNS THIS. It holds no key and sends no transaction. Submitting is a POST of the source files to the explorer's
 // verifysourcecode endpoint, so it needs SLUICE_APPROVE=verify; the other two modes need no approval.
 //
+// THE VAULT. AgentVault is created by the router's constructor, so it has no deployment transaction of its own. This script asks the
+// explorer about the router only: nothing is submitted for the vault, and the exit code never depends on the vault. What QIE's explorer
+// answered when the vault of the 2026-11-23 deployment was submitted by hand is in docs/EXPLORER-VAULT-INVESTIGATION.md. What can be
+// checked for any deployment, without the explorer, is the vault's code against the compiled AgentVault: pnpm live:vaultcheck. The
+// vault's files are still written below, because they are what a reader needs to build it again (the router's own standard input holds
+// its source too, since the router imports it).
+//
 // Whatever happens, it first writes everything the manual route needs to artifacts/verification/: for each contract the standard JSON
 // input, a flattened single file, and the exact settings (printed). The explorer answers 502 at times; when it does, this script says so and
 // the manual route in docs/MAINNET-RUNBOOK.md is the way through.
 //
-// Exit code 0: the explorer shows verified source for both. 1: it does not, or the command was wrong. 2: the explorer could not be reached.
+// Exit code 0: the explorer shows verified source for the router. 1: it does not, or the command was wrong. 2: the explorer could not be reached.
+import { exitWith } from "../../src/exit";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getAddress } from "ethers";
+import { NoHealthyEndpoint, describeSelection, orderedUrls, resolveEndpoint } from "@sluice/sdk";
 import { NetworkError } from "../../src/evidence";
 import { recorderRpc, RpcRefused, explorerVerifiedFor } from "../../src/recorder";
 import type { Rpc } from "../../src/evidence";
@@ -73,29 +82,39 @@ export async function main(argv: string[], env: Env = process.env, io: VerifyIo 
     if (!explorer) throw new UsageError("--explorer is needed: there is no default explorer for this network");
 
     // The constructor arguments come from the deployment's own data, read back from the chain.
-    const rpcUrls = env.SLUICE_RPC_URL?.trim() ? [env.SLUICE_RPC_URL.trim()] : [1, 2, 3, 4, 5].map((n) => `https://rpc${n}${network}.qie.digital/`);
+    let rpcUrls: string[] = [];
+    if (!io.rpc) {
+      // The first of QIE's endpoints that answers with this chain's id, with the others as fallbacks; SLUICE_RPC_URL names one and is used as given.
+      const sel = await resolveEndpoint(network, env.SLUICE_RPC_URL, { fetchImpl: io.fetchImpl });
+      log(describeSelection(sel));
+      rpcUrls = orderedUrls(sel);
+    }
     const rpc = io.rpc ?? recorderRpc(rpcUrls, io.fetchImpl);
     const tx = (await rpc("eth_getTransactionByHash", [deployment.hash])) as { input?: string; to?: string | null } | null;
     if (!tx || tx.to !== null || typeof tx.input !== "string") throw new VerifyError("the deployment transaction was not found on this network, or it did not create a contract");
 
-    const contracts: Array<{ title: string; address: string; build: BuildInput; args: string }> = [];
+    // What the explorer is asked about: the router. The vault's files are written too, for building it again; this script never submits it.
     const routerBuild = buildInput(root, "contracts/PaymentRouter.sol", "PaymentRouter");
-    contracts.push({ title: "PaymentRouter", address: router, build: routerBuild, args: constructorArguments(tx.input, routerBuild.creationBytecode) });
-    contracts.push({ title: "AgentVault", address: vault, build: buildInput(root, "contracts/AgentVault.sol", "AgentVault"), args: vaultConstructorArguments(router) });
+    const vaultBuild = buildInput(root, "contracts/AgentVault.sol", "AgentVault");
+    const router_ = { title: "PaymentRouter", address: router, build: routerBuild, args: constructorArguments(tx.input, routerBuild.creationBytecode) };
+    const vault_ = { title: "AgentVault", address: vault, build: vaultBuild, args: vaultConstructorArguments(router) };
+    const contracts: Array<{ title: string; address: string; build: BuildInput; args: string }> = [router_];
+    const vaultNote = `AgentVault at ${vault} is created by the router's constructor. This command submits nothing for it and does not ask the explorer about it: see "The vault" in docs/MAINNET-RUNBOOK.md. Check its code against the compiled AgentVault with pnpm live:vaultcheck`;
 
     // Everything the manual route needs, written first.
     const out = join(root, "artifacts", "verification");
     mkdirSync(out, { recursive: true });
-    log(`settings for the explorer, if you verify by hand: compiler ${contracts[0]?.build.compilerVersion}, optimization on, ${EXPECTED.optimizerRuns} runs, EVM version ${EXPECTED.evmVersion}, licence MIT`);
-    for (const c of contracts) {
+    log(`settings for the explorer, if you verify by hand: compiler ${routerBuild.compilerVersion}, optimization on, ${EXPECTED.optimizerRuns} runs, EVM version ${EXPECTED.evmVersion}, licence MIT`);
+    for (const c of [router_, vault_]) {
       writeFileSync(join(out, `${c.title}.standard-input.json`), JSON.stringify(c.build.input, null, 2));
       writeFileSync(join(out, `${c.title}.flat.sol`), flatten(c.build.input.sources, c.build.path));
       writeFileSync(join(out, `${c.title}.constructor-arguments.txt`), `${c.args}\n`);
       log(`${c.title} at ${c.address}: contract name ${c.build.path}:${c.build.name}; constructor arguments (hex, no 0x) ${c.args.length === 0 ? "(none)" : `${c.args.slice(0, 20)}…(${c.args.length / 2} bytes)`}`);
-      log(`  wrote artifacts/verification/${c.title}.standard-input.json, ${c.title}.flat.sol and ${c.title}.constructor-arguments.txt`);
+      log(`  wrote artifacts/verification/${c.title}.standard-input.json, ${c.title}.flat.sol and ${c.title}.constructor-arguments.txt${c === vault_ ? " (for building the vault again; this command does not submit them)" : ""}`);
     }
     if (args["prepare-only"]) {
-      log("prepared. To verify by hand, follow the manual steps in docs/MAINNET-RUNBOOK.md with these files.");
+      log("prepared. To verify the router by hand, follow the manual steps in docs/MAINNET-RUNBOOK.md with its files.");
+      log(vaultNote);
       return 0;
     }
 
@@ -104,6 +123,7 @@ export async function main(argv: string[], env: Env = process.env, io: VerifyIo 
     const state = new Map<string, boolean>();
     for (const c of contracts) state.set(c.title, await shows(c.address));
     for (const c of contracts) log(`explorer: ${c.title} ${state.get(c.title) ? "shows verified source" : "does not show verified source"}`);
+    log(vaultNote);
     if (args["check-only"]) return contracts.every((c) => state.get(c.title)) ? 0 : 1;
 
     let unreachable = false;
@@ -127,7 +147,7 @@ export async function main(argv: string[], env: Env = process.env, io: VerifyIo 
       log(`refused: ${err.message}`);
       return 1;
     }
-    if (err instanceof NetworkError || err instanceof RpcRefused) {
+    if (err instanceof NetworkError || err instanceof RpcRefused || err instanceof NoHealthyEndpoint) {
       log("the chain could not be read, so nothing was prepared or submitted.");
       return 2;
     }
@@ -138,10 +158,10 @@ export async function main(argv: string[], env: Env = process.env, io: VerifyIo 
 
 if (require.main === module) {
   main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+    (code) => exitWith(code),
     () => {
       console.error("live:verify failed");
-      process.exit(1);
+      exitWith(1);
     },
   );
 }

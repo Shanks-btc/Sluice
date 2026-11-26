@@ -27,7 +27,8 @@ export function main(argv: string[], log: (line: string) => void = console.log):
   }
   log(`wrote a new key to ${path}`);
   log(`address: ${wallet.address}`);
-  log("send QIE to that address from a wallet you control, put the file's contents in the host's secret store as SLUICE_RELAYER_KEY, then delete the file.");
+  log("send QIE to that address from a wallet you control. If this is the relayer's key: put the file's contents in the host's secret store as SLUICE_RELAYER_KEY, then delete the file.");
+  log("If this is the deployer's key: read it into one session as SLUICE_KEY (see docs/MAINNET-RUNBOOK.md) and keep the file where only you can read it. Never use one key for both.");
   return 0;
 }
 

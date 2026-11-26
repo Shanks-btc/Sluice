@@ -34,11 +34,15 @@ export class MutationError extends Error {}
 
 /** The source with the mutation applied. Throws unless `find` occurs exactly once. */
 export function applyMutation(source: string, m: Mutation): string {
-  const first = source.indexOf(m.find);
+  // A file checked out with CRLF line endings (git's autocrlf on Windows) is matched, and changed, with its own line endings.
+  const eol = source.includes("\r\n") ? "\r\n" : "\n";
+  const find = m.find.replace(/\r?\n/g, eol);
+  const replace = m.replace.replace(/\r?\n/g, eol);
+  const first = source.indexOf(find);
   if (first < 0) throw new MutationError(`${m.id}: the text to change is not in ${m.file}`);
-  if (source.indexOf(m.find, first + 1) >= 0) throw new MutationError(`${m.id}: the text to change occurs more than once in ${m.file}`);
+  if (source.indexOf(find, first + 1) >= 0) throw new MutationError(`${m.id}: the text to change occurs more than once in ${m.file}`);
   if (m.find === m.replace) throw new MutationError(`${m.id}: the change does nothing`);
-  return source.slice(0, first) + m.replace + source.slice(first + m.find.length);
+  return source.slice(0, first) + replace + source.slice(first + find.length);
 }
 
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");

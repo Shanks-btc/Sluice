@@ -152,6 +152,14 @@ describe("Web: wallet flows", function () {
       expect(plan.steps).to.have.length(2);
     });
 
+    it("names the network the site is set to, so a local copy of mainnet is never called real funds", async () => {
+      const { deps } = await setup();
+      const local = { ...deps, network: NETWORKS.local };
+      const { plan } = must(await planDeposit(local, USDC("5")));
+      const field = (label: string) => plan.fields.find((f) => f.label === label)?.value;
+      expect(field("Network")).to.equal("Local node or fork, chain 1990 (no real funds)");
+    });
+
     it("sends nothing before the person confirms", async () => {
       const { mock, deps } = await setup();
       const { plan } = must(await planDeposit(deps, USDC("5")));

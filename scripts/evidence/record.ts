@@ -6,7 +6,7 @@
 // it shows what the claim says, and then adds a dated row, with its explorer link and the command that checks it again. If the chain
 // disagrees with the claim, it prints why and writes nothing. It holds no key and sends nothing.
 //
-//   --claim    deploy | verify-link | settle-batch | deposit | relayed-start | paid-call-settlement | withdraw
+//   --claim    deploy | verify-link | settle-batch | deposit | relayed-start | paid-call-settlement | withdraw | refund
 //   --tx       the transaction. For deploy and verify-link it is the deployment; for relayed-start it is the deposit
 //   --network  mainnet or testnet (or fork, for a test run on a local copy, which never touches docs/EVIDENCE.md)
 //   --router   the router (or SLUICE_ROUTER); not needed for deploy and verify-link
@@ -20,8 +20,10 @@
 //
 // Exit code 0: recorded. 1: refused (the claim does not hold, or the command was wrong). 2: the chain could not be read, so nothing was
 // verified and nothing was written.
+import { exitWith } from "../../src/exit";
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { NoHealthyEndpoint, QIE_CHAIN_ID, describeSelection, orderedUrls, selectEndpoint } from "@sluice/sdk";
 import { NetworkError } from "../../src/evidence";
 import type { Rpc } from "../../src/evidence";
 import {
@@ -126,7 +128,14 @@ export async function main(argv: string[], env: Env = process.env, io: RecordIo 
       file = resolve(args.file);
     }
 
-    const urls = chooseRpc(network, args.rpc.length > 0 ? args.rpc : env.EVIDENCE_RPC_URL?.trim() ? [env.EVIDENCE_RPC_URL.trim()] : [], args.allowCustomRpc);
+    const given = args.rpc.length > 0 ? args.rpc : env.EVIDENCE_RPC_URL?.trim() ? [env.EVIDENCE_RPC_URL.trim()] : [];
+    let urls = chooseRpc(network, given, args.allowCustomRpc);
+    if (network !== "fork" && given.length === 0 && !io.rpc) {
+      // No endpoint was named: probe QIE's five, use the first that answers with this network's chain id, and keep the rest as fallbacks.
+      const sel = await selectEndpoint(urls, QIE_CHAIN_ID[network], { fetchImpl: io.fetchImpl });
+      log(describeSelection(sel));
+      urls = orderedUrls(sel);
+    }
     const rpc = io.rpc ?? recorderRpc(urls, io.fetchImpl);
     const router = args.router ?? env.SLUICE_ROUTER?.trim();
     const input: ClaimInput = { claim, network, hash: args.tx, ...(router ? { router } : {}), ...(args.topup ? { topup: args.topup } : {}), ...(args.tool ? { tool: args.tool } : {}) };
@@ -166,7 +175,7 @@ export async function main(argv: string[], env: Env = process.env, io: RecordIo 
       log(`refused: ${err.message}. Nothing was written.`);
       return 1;
     }
-    if (err instanceof NetworkError || err instanceof RpcRefused) {
+    if (err instanceof NetworkError || err instanceof RpcRefused || err instanceof NoHealthyEndpoint) {
       log("the chain could not be read, so nothing was verified and nothing was written.");
       return 2;
     }
@@ -177,10 +186,10 @@ export async function main(argv: string[], env: Env = process.env, io: RecordIo 
 
 if (require.main === module) {
   main(process.argv.slice(2)).then(
-    (code) => process.exit(code),
+    (code) => exitWith(code),
     () => {
       console.error("evidence:record failed");
-      process.exit(1);
+      exitWith(1);
     },
   );
 }

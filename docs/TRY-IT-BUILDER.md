@@ -120,4 +120,4 @@ The SDK is part of this repository and is not published to a package registry, s
 
 - That a real agent will find your tool. There is no directory.
 - That the price is right. Nothing here measures what a call is worth.
-- That it works on QIE mainnet. The mainnet route needs a deployed router, and until [EVIDENCE.md](EVIDENCE.md) has verified mainnet rows, nothing here claims it does.
+- That it works for you on QIE mainnet. [EVIDENCE.md](EVIDENCE.md) has verified mainnet rows for settled payments, all of them founder-run. They show signed payments settling between the project's own wallets, not that someone outside the project followed this page, and not that a tool ran.

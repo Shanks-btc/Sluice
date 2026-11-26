@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { expect } from "chai";
 import { BANNED, scanClaims, scanLiveWord } from "../../../src/claims";
 import { parseEvidenceStrict } from "../../../src/evidence";
+import { VAULT_RECORD_PATH, explorerShowsVault } from "../../../src/vault-record";
 import { PUBLIC_ENV_NAMES } from "../../../apps/web/src/lib/config";
 import { IDEA, IDEA_SENTENCES, QUSDC_FINDING } from "../../../apps/web/src/content/copy";
 import { allText, extractText, sourceFiles, webRoot } from "../../helpers/web-copy";
@@ -28,12 +29,14 @@ export const WEB_BANNED: ReadonlyArray<{ rule: string; pattern: RegExp }> = [
 
 const FOUNDER_CLAIMS = /(?:^|[.!?]\s+)The founder (set|made|decided|directed|explained|understood|reviewed|tested|wrote|designed|chose|approved|verified|ran|understands|has explained|has reviewed|has tested|did)\b/m;
 
-const scanPieces = (pieces: Piece[]) => {
+const vaultShown = explorerShowsVault(read(VAULT_RECORD_PATH)) !== null;
+
+const scanPieces = (pieces: Piece[], rows: number = mainnetRows, shown: boolean = vaultShown) => {
   const bad: string[] = [];
   for (const p of pieces) {
-    for (const f of scanClaims(p.file, p.text, mainnetRows)) bad.push(`${p.file}:${p.line} ${f.rule}: "${f.text}" in "${p.text.slice(0, 80)}"`);
+    for (const f of scanClaims(p.file, p.text, rows, shown)) bad.push(`${p.file}:${p.line} ${f.rule}: "${f.text}" in "${p.text.slice(0, 80)}"`);
     // src/status.ts is the typed status list: the word is its vocabulary, and test/unit/web/content.test.ts holds every use of it to the evidence file.
-    for (const f of p.file === "src/status.ts" ? [] : scanLiveWord(p.file, p.text, mainnetRows)) bad.push(`${p.file}:${p.line} ${f.rule}: "${p.text.slice(0, 80)}"`);
+    for (const f of p.file === "src/status.ts" ? [] : scanLiveWord(p.file, p.text, rows)) bad.push(`${p.file}:${p.line} ${f.rule}: "${p.text.slice(0, 80)}"`);
     for (const rule of WEB_BANNED) {
       const hit = rule.pattern.exec(p.text);
       if (hit) bad.push(`${p.file}:${p.line} ${rule.rule}: "${hit[0]}" in "${p.text.slice(0, 80)}"`);
@@ -61,7 +64,9 @@ describe("Web honesty: the claims scan", () => {
   });
 
   describe("controls: the scan catches what it should and leaves honest text alone", () => {
-    const flagged = (text: string, file = "x.tsx") => scanPieces([{ file, line: 1, text }]).length > 0;
+    // The controls are about a world with no mainnet row and no record of the vault, whatever the repository holds today: a claim of
+    // being live, or of the vault being verified, is flagged only then.
+    const flagged = (text: string, file = "x.tsx") => scanPieces([{ file, line: 1, text }], 0, false).length > 0;
     const bad = [
       "The first payment network for agents.",
       "Trusted by 2,000 builders.",
@@ -152,12 +157,15 @@ describe("Web honesty: secrets and keys", () => {
         return false;
       }
     });
+    // A failure gives the file and the line, never what the line says: .env.example is one of the files.
+    const found: string[] = [];
     for (const f of files) {
-      for (const m of read(f).matchAll(/NEXT_PUBLIC_[A-Z_]+\s*=\s*(\S+)/g)) {
-        const value = m[1] as string;
-        expect(SECRET_VALUE.test(value), `${f}: ${m[0]}`).to.equal(false);
+      const text = read(f);
+      for (const m of text.matchAll(/NEXT_PUBLIC_[A-Z_]+\s*=\s*(\S+)/g)) {
+        if (SECRET_VALUE.test(m[1] as string)) found.push(`${f}:${text.slice(0, m.index).split("\n").length}`);
       }
     }
+    expect(found, "lines that give a public name a secret-looking value").to.deep.equal([]);
   });
 
   it("no source file names a server-only secret, and none holds a key-shaped value", () => {
@@ -196,6 +204,9 @@ describe("Web honesty: secrets and keys", () => {
 describe("Web honesty: nothing can take a private key or a seed phrase", () => {
   const stripComments = (t: string) => t.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
   const FIELD_WORDS = /(private[ -]?key|mnemonic|seed[ -]?phrase|recovery[ -]?phrase|secret[ -]?(key|phrase)|keystore|passphrase|wallet[ -]?json)/i;
+  // The two components that use browser storage: the theme choice, and the list of payments sent and not yet seen settled (src/lib/resume.ts
+  // says what a record holds, and a test in live.test.ts holds it to ids, a tool, an amount, an address and a nonce: no key, no signature).
+  const STORAGE_USERS = ["src/components/nav.tsx", "src/components/paid-call-panel.tsx"];
 
   /** Finds inputs, textareas and storage that could hold a key. Returned as readable findings. */
   function findKeyHolders(file: string, rawSource: string): string[] {
@@ -210,7 +221,7 @@ describe("Web honesty: nothing can take a private key or a seed phrase", () => {
       if (FIELD_WORDS.test(label)) found.push(`${file}: a label that asks for a key: ${label.slice(0, 80)}`);
     }
     if (/\b(privateKey|mnemonic|seedPhrase|secretKey|fromPhrase|HDNodeWallet|createRandom|new Wallet\()/.test(source)) found.push(`${file}: code that makes or holds a key`);
-    if (/\b(localStorage|sessionStorage|indexedDB|document\.cookie)\b/.test(source) && file !== "src/components/nav.tsx") found.push(`${file}: uses browser storage`);
+    if (/\b(localStorage|sessionStorage|indexedDB|document\.cookie)\b/.test(source) && !STORAGE_USERS.includes(file)) found.push(`${file}: uses browser storage`);
     return found;
   }
 
@@ -219,9 +230,13 @@ describe("Web honesty: nothing can take a private key or a seed phrase", () => {
     expect(bad).to.deep.equal([]);
   });
 
-  it("the only browser storage is the theme choice, in one component", () => {
+  it("browser storage is used in two components: the theme choice, and the list of payments not yet seen settled", () => {
     const users = sourceFiles().filter((f) => /\b(localStorage|sessionStorage|indexedDB)\b/.test(stripComments(readFileSync(join(webRoot, f), "utf8"))));
-    expect(users.sort()).to.deep.equal(["src/components/nav.tsx"]);
+    expect(users.sort()).to.deep.equal([...STORAGE_USERS].sort());
+    // Neither stores anything but what the privacy notice says: the theme, and the in-flight records in src/lib/resume.ts.
+    const panel = stripComments(readFileSync(join(webRoot, "src/components/paid-call-panel.tsx"), "utf8"));
+    expect(panel.match(/\b(getItem|setItem)\(/g) ?? [], "the panel reads and writes storage only through src/lib/resume.ts").to.deep.equal([]);
+    expect(panel).to.match(/from "\.\.\/lib\/resume"/);
   });
 
   describe("controls: the scan catches what it should", () => {
@@ -237,6 +252,8 @@ describe("Web honesty: nothing can take a private key or a seed phrase", () => {
     it("leaves an address field and the theme storage alone", () => {
       expect(findKeyHolders("a.tsx", '<input id="agent" placeholder="0x…" />')).to.deep.equal([]);
       expect(findKeyHolders("src/components/nav.tsx", 'window.localStorage.getItem("sluice-theme")')).to.deep.equal([]);
+      expect(findKeyHolders("src/components/paid-call-panel.tsx", "return window.localStorage;")).to.deep.equal([]);
+      expect(findKeyHolders("src/components/live-demo.tsx", "return window.localStorage;")).to.have.length(1);
     });
   });
 });

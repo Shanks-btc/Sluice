@@ -994,7 +994,43 @@ export class Facilitator {
         remainingWei: b.remainingWei.toString(),
       },
       queued: this.store.queued(HARD_CAPS.maxBatchSize * 1000).length,
+      // When the last intent settled, and in which block, so a status page can say how long ago the service last did its work. Null until one has.
+      lastSettled: this.lastSettled(),
       alerts: this.relayer.alerts,
+    };
+  }
+
+  /** The time and block of the last settlement, and nothing else: /health is public and holds no 32-byte value, so none can be taken for a key. */
+  private lastSettled(): { blockNumber: number | null; at: number } | null {
+    const r = this.store.latestSettled();
+    return r ? { blockNumber: r.blockNumber ?? null, at: r.updatedAt } : null;
+  }
+
+  /**
+   * Gauges for the private metrics path. Read from the journal and the relayer, so they survive a restart. No payer, payee, amount or
+   * key is in them: counts, ages and the relayer's own balance.
+   */
+  async metrics() {
+    const h = await this.health();
+    const counts = this.store.countByStatus();
+    const queued = this.store.queued(HARD_CAPS.maxBatchSize * 1000);
+    const oldestQueued = queued.length ? Math.max(0, this.now() - Math.min(...queued.map((r) => r.createdAt))) : 0;
+    const last = this.lastSettled();
+    return {
+      intents: counts,
+      oldestQueuedAgeSeconds: oldestQueued,
+      inFlight: h.inFlight.count,
+      oldestInFlightAgeSeconds: h.inFlight.oldestAgeSeconds,
+      killSwitch: h.killSwitch,
+      lowBalance: h.lowBalance,
+      draining: h.draining,
+      storeHealthy: h.store.healthy,
+      relayerBalanceWei: h.relayerBalanceWei,
+      budgetWei: h.budget.budgetWei,
+      spentWei: h.budget.spentWei,
+      alerts: h.alerts.length,
+      lastSettledBlock: last?.blockNumber ?? null,
+      lastSettledAt: last?.at ?? null,
     };
   }
 }

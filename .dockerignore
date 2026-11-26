@@ -11,6 +11,11 @@
 .env
 .env.*
 !.env.example
+**/*.key
+**/*.pem
+/.rehearsal
+/.local-mainnet
+/rehearsal-state.json
 **/*.jsonl
 **/*.lock
 **/deployment.json

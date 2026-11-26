@@ -1,7 +1,7 @@
 // One small round trip against a deployed router on QIE mainnet or testnet: approve, deposit, a payer-signed
 // settle, an agent session with its own signed settle, revoke, withdraw and refund.
 //
-// THE FOUNDER RUNS THIS. It has not been run by anyone, and nothing in this repository runs it automatically.
+// THE FOUNDER RUNS THIS. Nothing in this repository runs it automatically.
 //
 //   SLUICE_NETWORK=mainnet SLUICE_APPROVE=smoke SLUICE_KEY=... SLUICE_ROUTER=0x... \
 //   pnpm exec ts-node scripts/live/smoke.ts
@@ -11,8 +11,10 @@
 // src/live.ts (0.3 QUSDC in, nearly all of it back out). Afterwards it prints the `pnpm evidence:record`
 // commands that record each transaction; the recorder verifies it against the chain before it writes a row.
 import { writeFileSync } from "node:fs";
-import { JsonRpcProvider, Wallet } from "ethers";
-import { formatQie, redact, requireApproval, SpendMeter } from "../../src/guard";
+import { Wallet } from "ethers";
+import { requireNodeChain } from "@sluice/sdk";
+import { chooseRpc, providerFor } from "../../src/rpc-use";
+import { GuardError, formatQie, redact, requireApproval, SpendMeter } from "../../src/guard";
 import { dryRunSmoke, formatDryRun } from "../../src/dryrun";
 import { DEFAULT_SMOKE_AMOUNTS, readSmokeParams, recorderCommands, runSmoke, smokePlan } from "../../src/live";
 import type { Env } from "../../src/live";
@@ -22,12 +24,11 @@ export async function main(env: Env = process.env, log: (line: string) => void =
   // The gate comes first. Nothing below runs, and no connection is opened, unless it passes.
   const approval = requireApproval("smoke", env, smokePlan());
   const params = readSmokeParams(env);
+  // The only option is --dry-run, and anything else is refused: a mistyped --dry-run must never become a real run.
+  for (const flag of argv) if (flag !== "--dry-run") throw new GuardError(`refusing to run smoke: unknown option ${flag.slice(0, 40)} (the option is --dry-run)`);
 
-  const provider = new JsonRpcProvider(approval.rpcUrl, approval.chainId);
-  const reported = BigInt(String(await provider.send("eth_chainId", [])));
-  if (reported !== BigInt(approval.chainId)) {
-    throw new Error(`the RPC is on chain ${reported}, but ${approval.network} is chain ${approval.chainId}`);
-  }
+  const provider = providerFor(await chooseRpc(approval.network, env.SLUICE_RPC_URL, log), approval.chainId);
+  await requireNodeChain(provider, approval.chainId, approval.network);
   const signer = new Wallet(approval.privateKey(), provider);
   log(`network ${approval.network} (chain ${approval.chainId})`);
   log(`signer ${signer.address} (holds ${formatQie(await provider.getBalance(signer.address))} QIE)`);

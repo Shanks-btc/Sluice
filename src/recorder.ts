@@ -7,9 +7,12 @@
 //
 // The claims it knows, and what each one checks (everything from the chain, by RPC):
 //   deploy                the transaction created a contract; its code is the compiled PaymentRouter's (same length and same metadata
-//                         hash); and it answers like a Sluice router on this chain
-//   verify-link           the deployment's contract has verified source on the explorer. The only claim that asks the explorer, because
-//                         "verified" is something only the explorer says
+//                         hash); it answers like a Sluice router on this chain; and the vault it created has code and names it as
+//                         its router. The vault is created by the router's constructor, so it has no deployment of its own: its code
+//                         is compared with the compiled AgentVault by pnpm live:vaultcheck, which is a command to run and not a claim
+//                         this recorder writes
+//   verify-link           the explorer shows verified source for the deployment's contract, which is the router. It says nothing about
+//                         the vault. The only claim that asks the explorer, because "verified" is something only the explorer says
 //   deposit               a router Deposited event in a successful transaction
 //   withdraw              a router Withdrawn event in a successful transaction
 //   settle-batch          the transaction is a call to the router's batchSettle, and the router emitted Settled for the intents it paid
@@ -18,19 +21,21 @@
 //                         MCP tool call took place, and the row does not say it did
 //   relayed-start         a deposit whose payer signed it themselves, after a plain QIE top-up from another address, at a time when
 //                         the payer's QIE balance was zero. The top-up's hash is part of the claim
+//   refund                a router Refunded event in a successful transaction: a payer's unspent prepaid balance left the router, by the
+//                         payer's own transaction or by a signed request that a relayer sent. It is not a payment to anyone's earnings
 //
 // "mainnet" and "testnet" rows go into docs/EVIDENCE.md, each under its own heading, each with the network written in the row. A row
 // from a local fork is labelled "fork" and is never written to that file.
 import { Interface, TypedDataEncoder, getAddress, id } from "ethers";
 import { EVENTS } from "./events";
-import { EVIDENCE_COLUMNS, EVIDENCE_COLUMNS_EXTENDED, NETWORKS, NetworkError, checkRow, parseEvidenceStrict } from "./evidence";
+import { EVIDENCE_COLUMNS, EVIDENCE_COLUMNS_EXTENDED, NETWORKS, NetworkError, checkRow, hashFromCell, parseEvidenceStrict } from "./evidence";
 import type { EvidenceRow, Network, Rpc, RowResult } from "./evidence";
 import { QUSDC_ADDRESS } from "./guard";
 import { RpcRefused, readOnlyRpc } from "./readrpc";
 import { loadArtifact } from "./live";
 import { formatQusdc } from "./units";
 
-export const CLAIM_TYPES = ["deploy", "verify-link", "settle-batch", "deposit", "relayed-start", "paid-call-settlement", "withdraw"] as const;
+export const CLAIM_TYPES = ["deploy", "verify-link", "settle-batch", "deposit", "relayed-start", "paid-call-settlement", "withdraw", "refund"] as const;
 export type ClaimType = (typeof CLAIM_TYPES)[number];
 
 /** The Event column for each claim. Deployed and SourceVerified are not contract events: they are what the row says happened. */
@@ -42,6 +47,7 @@ export const CLAIM_EVENT: Readonly<Record<ClaimType, string>> = {
   "relayed-start": "Deposited",
   "paid-call-settlement": "Settled",
   withdraw: "Withdrawn",
+  refund: "Refunded",
 };
 
 export type RecordNetwork = Network | "fork";
@@ -190,6 +196,41 @@ async function ensureRouter(rpc: Rpc, router: string, network: RecordNetwork): P
   }
 }
 
+const vaultViews = new Interface(["function router() view returns (address)"]);
+
+/**
+ * The router's vault is a contract, and it names this router as its router. The router's constructor creates the vault, and the router
+ * checks nothing about it afterwards, so a deployment claim looks. Returns the vault's address.
+ */
+async function ensureVault(rpc: Rpc, router: string): Promise<string> {
+  const view = async (to: string, data: string): Promise<string> => {
+    try {
+      return (await rpc("eth_call", [{ to, data }, "latest"])) as string;
+    } catch (err) {
+      if (err instanceof RpcRefused) throw new RecordError("the router's vault could not be read");
+      throw err;
+    }
+  };
+  let vault: string;
+  try {
+    vault = getAddress(String(routerViews.decodeFunctionResult("vault", await view(router, routerViews.encodeFunctionData("vault")))[0]));
+  } catch (err) {
+    if (err instanceof RecordError) throw err;
+    throw new RecordError("the router does not name a vault");
+  }
+  const code = await rpc("eth_getCode", [vault, "latest"]);
+  if (typeof code !== "string" || code === "0x") throw new RecordError("there is no code at the router's vault address");
+  let back: string;
+  try {
+    back = getAddress(String(vaultViews.decodeFunctionResult("router", await view(vault, vaultViews.encodeFunctionData("router")))[0]));
+  } catch (err) {
+    if (err instanceof RecordError) throw err;
+    throw new RecordError("the router's vault does not name a router");
+  }
+  if (back !== getAddress(router)) throw new RecordError("the router's vault names another router");
+  return vault;
+}
+
 const eventInterface = (name: string) => new Interface([EVENTS[name]?.fragment as string]);
 
 /** The router's events of one kind in a receipt, decoded. */
@@ -262,11 +303,15 @@ async function recordDeploy(input: ClaimInput, deps: ClaimDeps, verifyOnly: fals
     if (!compiled) throw new RecordError("the compiled router was not found: run pnpm compile, so the deployed code can be compared with it");
     if (!sameCompiledCode(code, compiled)) throw new RecordError("the code at the address is not the compiled PaymentRouter's (different length or metadata hash)");
     notes.push("the deployed code has the compiled router's length and metadata hash");
+    const vault = await ensureVault(deps.rpc, address);
+    notes.push(
+      `the router's vault ${vault} has code and names this router as its router. The router's constructor created it, so it has no deployment of its own; compare its code with the compiled AgentVault by running pnpm live:vaultcheck`,
+    );
     return { rows: [make(input, loaded, { contract: address, amount: "—", who: getAddress(loaded.tx.from) })], notes };
   }
   if (!deps.explorerVerified) throw new RecordError("the explorer could not be asked");
-  if (!(await deps.explorerVerified(address))) throw new RecordError("the explorer does not show verified source for this contract");
-  notes.push("the explorer shows verified source for the contract");
+  if (!(await deps.explorerVerified(address))) throw new RecordError("the explorer does not show verified source for this contract (the router)");
+  notes.push("the explorer shows verified source for the router, which is the contract this deployment created. That says nothing about the vault: this claim does not ask the explorer about it");
   return { rows: [make(input, loaded, { contract: address, amount: "—", who: getAddress(loaded.tx.from) })], notes };
 }
 
@@ -367,6 +412,8 @@ export async function verifyClaim(input: ClaimInput, deps: ClaimDeps): Promise<R
       return recordEvents(input, deps, "Deposited");
     case "withdraw":
       return recordEvents(input, deps, "Withdrawn");
+    case "refund":
+      return recordEvents(input, deps, "Refunded");
     case "settle-batch":
     case "paid-call-settlement":
       return recordEvents(input, deps, "Settled");
@@ -468,7 +515,9 @@ function upgradeEmptyTable(lines: string[], network: Network): void {
  */
 export function appendRows(markdown: string, rows: RecordedRow[]): string {
   if (rows.length === 0) throw new RecordError("there is nothing to record");
-  let lines = markdown.split("\n");
+  // The file's own line endings are kept: a file checked out with CRLF (git's autocrlf on Windows) gets CRLF rows, not a mix.
+  const eol = markdown.includes("\r\n") ? "\r\n" : "\n";
+  let lines = markdown.split(/\r?\n/);
   // A table in the original seven-column format that has no rows is brought up to the recorded format, wherever the new rows go; one that
   // has rows is refused, because its rows have no Network column.
   for (const network of ["mainnet", "testnet"] as const) upgradeEmptyTable(lines, network);
@@ -517,7 +566,7 @@ export function appendRows(markdown: string, rows: RecordedRow[]): string {
     }
     lines = [...lines.slice(0, end), ...fresh, ...lines.slice(end)];
   }
-  const out = lines.join("\n");
+  const out = lines.join(eol);
   const real = rows.filter((r) => r.network !== "fork");
   if (real.length > 0) {
     // What is written must read back, strictly, with each row under the network it is labelled with.
@@ -564,6 +613,38 @@ export async function checkClaimRow(row: EvidenceRow, deps: ClaimDeps, router?: 
     if (err instanceof NetworkError || err instanceof RpcRefused) return { status: "SKIPPED", detail: "network: the chain could not be read" };
     return { status: "SKIPPED", detail: "network: unexpected response" };
   }
+}
+
+/**
+ * The rows of the "Fork" table in a copy of the evidence file, which the recorder writes for a run on a local copy of the chain. They are
+ * labelled "fork", the normal parser does not read them, and nothing counts them as evidence of anything; this exists so that a fork run
+ * can be checked and counted with the same commands that will be used on mainnet. A row that is not in the recorded format is refused.
+ */
+export function parseForkRows(markdown: string): Array<Omit<EvidenceRow, "network"> & { network: "fork" }> {
+  const rows: Array<Omit<EvidenceRow, "network"> & { network: "fork" }> = [];
+  let inFork = false;
+  let header = false;
+  for (const raw of markdown.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.startsWith("## ")) {
+      inFork = /^##\s+fork\b/i.test(line);
+      header = false;
+      continue;
+    }
+    if (!inFork || !line.startsWith("|")) continue;
+    const cells = line.replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => c.trim());
+    if (/^:?-{3,}:?$/.test(cells[0] ?? "")) continue;
+    if (!header) {
+      if (cells.join("|") !== EVIDENCE_COLUMNS_EXTENDED.join("|")) throw new RecordError("the Fork table does not have the columns the recorder writes");
+      header = true;
+      continue;
+    }
+    if (cells.length !== EVIDENCE_COLUMNS_EXTENDED.length) throw new RecordError(`malformed fork row: ${line.slice(0, 80)}`);
+    const [date, event, hash, block, contract, amount, who, labelled, claim, recheck] = cells as [string, string, string, string, string, string, string, string, string, string];
+    if (labelled !== "fork") throw new RecordError(`a row labelled "${labelled}" is in the Fork table: ${line.slice(0, 80)}`);
+    rows.push({ network: "fork", date, event, hash: hashFromCell(hash), block, contract, amount, who, claim, recheck: recheck.replace(/`/g, "") });
+  }
+  return rows;
 }
 
 // ------------------------------------------------------------------------------------------------------------ counts

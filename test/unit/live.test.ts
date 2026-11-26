@@ -9,7 +9,9 @@ import type { Rpc } from "../../src/evidence";
 import { GuardError, SpendMeter } from "../../src/guard";
 import type { Caps } from "../../src/guard";
 import {
+  DEFAULT_FEE_BPS,
   DEFAULT_SMOKE_AMOUNTS,
+  MAX_FEE_BPS,
   deployRouter,
   evidenceLines,
   readDeployParams,
@@ -291,16 +293,22 @@ describe("Live library: reading parameters", () => {
     expect(readDeployParams({ ...ok, SLUICE_TOKEN: owner }, "testnet").token).to.equal(owner);
   });
 
-  it("has no default owner, fee recipient or fee: each must be chosen on purpose", () => {
-    for (const missing of ["SLUICE_OWNER", "SLUICE_FEE_RECIPIENT", "SLUICE_FEE_BPS"]) {
+  it("has no default owner or fee recipient: each must be chosen on purpose", () => {
+    for (const missing of ["SLUICE_OWNER", "SLUICE_FEE_RECIPIENT"]) {
       const env = { ...ok, [missing]: undefined };
       expect(() => readDeployParams(env, "mainnet"), missing).to.throw(GuardError);
     }
   });
 
+  it("defaults the fee to 100 basis points (1%) when SLUICE_FEE_BPS is not set or is empty, and says nothing else is defaulted", () => {
+    for (const fee of [undefined, "", " "]) expect(readDeployParams({ ...ok, SLUICE_FEE_BPS: fee }, "mainnet").feeBps, JSON.stringify(fee)).to.equal(100);
+    expect(DEFAULT_FEE_BPS).to.equal(100);
+    expect(MAX_FEE_BPS).to.equal(200);
+  });
+
   it("accepts a fee from 0 to 200 and refuses anything else", () => {
     for (const fee of ["0", "1", "100", "200"]) expect(readDeployParams({ ...ok, SLUICE_FEE_BPS: fee }, "mainnet").feeBps).to.equal(Number(fee));
-    for (const fee of ["201", "-1", "1.5", "abc", "", "0x10", "1000", "1e2", " "]) {
+    for (const fee of ["201", "-1", "1.5", "abc", "0x10", "1000", "1e2"]) {
       expect(() => readDeployParams({ ...ok, SLUICE_FEE_BPS: fee }, "mainnet"), JSON.stringify(fee)).to.throw(/0 to 200/);
     }
   });

@@ -1,6 +1,6 @@
 // Deploys one PaymentRouter (it creates its own AgentVault) to QIE mainnet or testnet.
 //
-// THE FOUNDER RUNS THIS. It has not been run by anyone, and nothing in this repository runs it automatically.
+// THE FOUNDER RUNS THIS. Nothing in this repository runs it automatically.
 //
 //   SLUICE_NETWORK=mainnet SLUICE_APPROVE=deploy SLUICE_KEY=... SLUICE_OWNER=... \
 //   SLUICE_FEE_RECIPIENT=... SLUICE_FEE_BPS=100 pnpm exec ts-node scripts/live/deploy.ts
@@ -11,27 +11,60 @@
 // Add --dry-run to see what it would send, to whom, with what data and at what cost, without sending anything. A dry run asks the node to
 // estimate the gas (which runs the transaction on the node and discards the result) and broadcasts nothing.
 import { writeFileSync } from "node:fs";
-import { JsonRpcProvider, Wallet, keccak256 } from "ethers";
+import { Wallet, getAddress, keccak256 } from "ethers";
+import { requireNodeChain } from "@sluice/sdk";
 import { dryRunDeploy, formatDryRun } from "../../src/dryrun";
-import { formatQie, redact, requireApproval, SpendMeter } from "../../src/guard";
-import { deployPlan, deployRecorderCommands, deployRouter, readDeployParams } from "../../src/live";
+import { GuardError, formatQie, redact, requireApproval, SpendMeter } from "../../src/guard";
+import { DEFAULT_FEE_BPS, checkDeployRoles, checkDeployToken, deployPlan, deployRecorderCommands, deployRouter, readDeployParams } from "../../src/live";
+import { chooseRpc, providerFor } from "../../src/rpc-use";
 import type { Env } from "../../src/live";
+
+/** `--dry-run` and `--relayer <address>`. Anything else is refused: a mistyped `--dry-run` must never become a real deployment. */
+export function parseDeployArgs(argv: string[]): { dryRun: boolean; relayer?: string } {
+  const out: { dryRun: boolean; relayer?: string } = { dryRun: false };
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i] as string;
+    if (flag === "--dry-run") {
+      out.dryRun = true;
+    } else if (flag === "--relayer") {
+      const value = argv[++i];
+      if (value === undefined || value.startsWith("--")) throw new GuardError("--relayer needs the relayer's address");
+      out.relayer = value;
+    } else {
+      throw new GuardError(`refusing to run deploy: unknown option ${flag.slice(0, 40)} (the options are --dry-run and --relayer <address>)`);
+    }
+  }
+  return out;
+}
 
 export async function main(env: Env = process.env, log: (line: string) => void = console.log, argv: string[] = process.argv.slice(2)): Promise<void> {
   // The gate comes first. Nothing below runs, and no connection is opened, unless it passes.
   const approval = requireApproval("deploy", env, deployPlan());
   const params = readDeployParams(env, approval.network);
-  const dryRun = argv.includes("--dry-run");
-
-  const provider = new JsonRpcProvider(approval.rpcUrl, approval.chainId);
-  const reported = BigInt(String(await provider.send("eth_chainId", [])));
-  if (reported !== BigInt(approval.chainId)) {
-    throw new Error(`the RPC is on chain ${reported}, but ${approval.network} is chain ${approval.chainId}`);
+  const args = parseDeployArgs(argv);
+  const dryRun = args.dryRun;
+  const relayerText = args.relayer ?? env.SLUICE_RELAYER?.trim();
+  let relayer: string | undefined;
+  try {
+    relayer = relayerText ? getAddress(relayerText) : undefined;
+  } catch {
+    throw new GuardError("the relayer's address (SLUICE_RELAYER or --relayer) is not a valid address");
   }
+  // The roles are checked from the key's own address, before any connection is made: the deployer, the relayer, the owner and the fee
+  // recipient must be kept apart, and on mainnet the relayer's address must be given for that check to be possible.
+  const deployerAddress = new Wallet(approval.privateKey()).address;
+  checkDeployRoles(params, { deployer: deployerAddress, ...(relayer ? { relayer } : {}) }, approval.network);
+
+  // The first of QIE's public endpoints that answers with this chain's id (or the one SLUICE_RPC_URL names), with the rest as fallbacks.
+  const provider = providerFor(await chooseRpc(approval.network, env.SLUICE_RPC_URL, log), approval.chainId);
+  await requireNodeChain(provider, approval.chainId, approval.network);
   const signer = new Wallet(approval.privateKey(), provider);
+  // What is on chain at the token's address must be a contract with six decimals; on mainnet the address is QUSDC's, checked above.
+  await checkDeployToken(provider, params.token);
   log(`network ${approval.network} (chain ${approval.chainId})`);
   log(`deployer ${signer.address} (holds ${formatQie(await provider.getBalance(signer.address))} QIE)`);
-  log(`token ${params.token}, owner ${params.owner}, fee recipient ${params.feeRecipient}, fee ${params.feeBps} bps`);
+  log(`relayer ${relayer ?? "(not given)"}; owner and fee recipient are not the deployer${relayer ? " or the relayer" : ""}`);
+  log(`token ${params.token} (has code and 6 decimals), owner ${params.owner}, fee recipient ${params.feeRecipient}, fee ${params.feeBps} bps${env.SLUICE_FEE_BPS?.trim() ? "" : ` (the default of ${DEFAULT_FEE_BPS}; SLUICE_FEE_BPS was not set)`}`);
   log(`caps: ${formatQie(approval.caps.maxQieWei)} QIE of gas`);
 
   if (dryRun) {

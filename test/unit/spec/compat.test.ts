@@ -14,7 +14,7 @@ import { depositFor, fundWallet, startStack, throwawayWallet } from "../../helpe
 import type { Stack } from "../../helpers/stack";
 
 const root = join(__dirname, "..", "..", "..");
-const read = (p: string) => readFileSync(join(root, p), "utf8");
+const read = (p: string) => readFileSync(join(root, p), "utf8").replace(/\r\n/g, "\n"); // LF whatever git's autocrlf did to the checkout
 
 describe("Spec compatibility: a client written only from the spec", function () {
   this.timeout(120_000);

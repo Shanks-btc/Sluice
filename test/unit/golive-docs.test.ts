@@ -1,12 +1,14 @@
 // The go-live documents are held to the code and to the repository's honesty rules: every command is real, every setting named is declared,
 // every number matches the code it describes, every link goes somewhere, and none of them says anything is live, reviewed, or done by the
 // founder. The same claim scanner that runs over the README runs over them.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "chai";
 import { DEFAULT_CAPS, HARD_CAPS } from "@sluice/facilitator";
 import { scanClaims } from "../../src/claims";
 import { parseEvidenceStrict } from "../../src/evidence";
+import { safeReaddir } from "../../src/secret-paths";
+import { VAULT_RECORD_PATH, explorerShowsVault } from "../../src/vault-record";
 import { MEASURED_GAS, SMOKE_GAS_TOTAL } from "../../src/gas-figures";
 import { withCommas } from "../../src/gas";
 
@@ -19,6 +21,10 @@ const DOCS = [
   "docs/DEPLOY-FACILITATOR.md",
   "docs/DEPLOY-TOOL-SERVER.md",
   "docs/MAINNET-RUNBOOK.md",
+  "docs/MAINNET-GO-LIVE.md",
+  "docs/LOCAL-MAINNET-RUN.md",
+  "docs/HOSTING-RAILWAY.md",
+  "docs/HOSTING-VERCEL.md",
   "docs/REHEARSAL.md",
   "docs/REAL-CLIENT-TEST.md",
   "docs/TRY-IT-BUILDER.md",
@@ -60,7 +66,7 @@ describe("Go-live documents: they exist and are held to the claims rules", () =>
     it(`${file} exists, has no banned claim, and says nothing is live without a mainnet row`, () => {
       expect(existsSync(join(root, file)), file).to.equal(true);
       expect(read(file).trim().length).to.be.greaterThan(1500);
-      expect(scanClaims(file, read(file), mainnetRows)).to.deep.equal([]);
+      expect(scanClaims(file, read(file), mainnetRows, explorerShowsVault(read(VAULT_RECORD_PATH)) !== null)).to.deep.equal([]);
     });
   }
 
@@ -83,8 +89,20 @@ describe("Go-live documents: they exist and are held to the claims rules", () =>
   });
 
   it("every document says plainly what has not been run", () => {
-    for (const file of ["docs/DEPLOY-FACILITATOR.md", "docs/DEPLOY-TOOL-SERVER.md", "docs/MAINNET-RUNBOOK.md", "docs/REHEARSAL.md", "docs/REAL-CLIENT-TEST.md"]) {
-      expect(read(file), file).to.match(/(Nothing (in it |here )?has been run|has not been run|were not run|Nothing here has been run)/i);
+    // The two mainnet pages are held to the evidence file: while it has no mainnet row they say nothing has been run, and once
+    // it has one they must stop saying that and point at the file as the record of what has happened.
+    const pages = ["docs/MAINNET-RUNBOOK.md", "docs/MAINNET-GO-LIVE.md"];
+    const unrun = /(Nothing (in it |here )?has been run|has not been run|were not run|Nothing here has been run)/i;
+    for (const file of ["docs/DEPLOY-FACILITATOR.md", "docs/DEPLOY-TOOL-SERVER.md", "docs/HOSTING-RAILWAY.md", "docs/HOSTING-VERCEL.md", "docs/REHEARSAL.md", "docs/REAL-CLIENT-TEST.md", ...(mainnetRows === 0 ? pages : [])]) {
+      expect(read(file), file).to.match(unrun);
+    }
+    if (mainnetRows === 0) return;
+    for (const file of pages) {
+      const opening = read(file).split(/\r?\n/)[2] ?? "";
+      expect(opening, file).to.contain("What has already happened on QIE mainnet is what [EVIDENCE.md](EVIDENCE.md) records");
+      expect(opening, file).to.contain("a step with no row there is not shown to have happened");
+      expect(opening, file).to.contain("deploy again only if you mean to replace it");
+      expect(read(file), file).to.not.match(/Nothing in (it|this page) has been run on QIE mainnet/i);
     }
   });
 });
@@ -117,7 +135,7 @@ describe("Go-live documents: the commands in them are real", () => {
   });
 
   it("the runbook's commands never use || (a PowerShell 5 parse error), and a command that sets a variable and runs another uses a semicolon", () => {
-    for (const file of ["docs/MAINNET-RUNBOOK.md", "docs/REHEARSAL.md", "docs/TRY-IT-BUILDER.md", "docs/TRY-IT-AGENT.md", "docs/REAL-CLIENT-TEST.md"]) {
+    for (const file of ["docs/MAINNET-RUNBOOK.md", "docs/MAINNET-GO-LIVE.md", "docs/HOSTING-RAILWAY.md", "docs/HOSTING-VERCEL.md", "docs/REHEARSAL.md", "docs/TRY-IT-BUILDER.md", "docs/TRY-IT-AGENT.md", "docs/REAL-CLIENT-TEST.md"]) {
       const { code } = parts(read(file));
       for (const block of code) {
         expect(block, file).to.not.contain("||");
@@ -267,11 +285,14 @@ describe("Go-live documents: their numbers are the code's numbers", () => {
     expect(read("docs/GAS.md")).to.contain("1.125 gwei");
   });
 
-  it("the Dockerfiles pin the base image by version and digest, run as the unprivileged user, and hold no secret", () => {
+  it("the Dockerfiles pin the base image by version and digest, run the service as the unprivileged user, and hold no secret", () => {
     for (const file of ["packages/facilitator/Dockerfile", "examples/paid-tools/Dockerfile"]) {
       const text = read(file);
       expect(text, file).to.match(/ARG NODE_IMAGE=node:\d+\.\d+\.\d+-alpine[\d.]+@sha256:[0-9a-f]{64}/);
-      expect(text, file).to.match(/^USER node$/m);
+      // The tool server starts as node. The facilitator starts as root only so that its entrypoint can give the platform's volume to node,
+      // and then runs the service as node (test/unit/hosting.test.ts runs that entrypoint).
+      if (file.startsWith("examples/")) expect(text, file).to.match(/^USER node$/m);
+      else expect(text, file).to.match(/exec su-exec node/);
       expect(text, file).to.match(/pnpm install --frozen-lockfile/);
       expect(text, file).to.match(/HEALTHCHECK/);
       expect(text, file).to.not.match(/ENV\s+\w*KEY\b/);
@@ -326,6 +347,6 @@ describe("Go-live documents: the outreach drafts and the issue form", () => {
   });
 
   it("is listed in the layout and the docs list in the README", () => {
-    expect(readdirSync(join(root, ".github", "ISSUE_TEMPLATE"))).to.deep.equal(["i-tried-sluice.yml"]);
+    expect(safeReaddir(join(root, ".github", "ISSUE_TEMPLATE"))).to.deep.equal(["i-tried-sluice.yml"]);
   });
 });

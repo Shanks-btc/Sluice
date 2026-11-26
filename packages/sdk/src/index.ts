@@ -11,3 +11,5 @@ export * from "./authorize";
 export * from "./logger";
 export * from "./ratelimit";
 export * from "./timeout";
+export * from "./rpc";
+export * from "./ops";

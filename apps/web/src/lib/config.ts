@@ -17,6 +17,10 @@ export type AppConfig = {
   /** True only when both contract addresses are valid. */
   contractsConfigured: boolean;
   facilitatorUrl: string | null;
+  /** The hosted tool server the live demo and the builder's test call pay. */
+  toolsUrl: string | null;
+  /** The most QUSDC, in units (six places), one live session may deposit. Default 1 QUSDC, never above 10. A plain number so it crosses to the browser. */
+  sessionCapUnits: number;
   /** The project's repository on GitHub, when the deployer sets it. The footer and the documents link to it only then. */
   repoUrl: string | null;
   /** The block the router was deployed at, where a scan for events can stop. */
@@ -26,6 +30,21 @@ export type AppConfig = {
   problems: string[];
 };
 
+/** The default and the ceiling for what one live session may deposit, in QUSDC units: 1 QUSDC and 10 QUSDC. */
+export const DEFAULT_SESSION_CAP_UNITS = 1_000_000;
+export const MAX_SESSION_CAP_UNITS = 10_000_000;
+/** What the live demo suggests depositing: 0.10 QUSDC. */
+export const DEFAULT_DEPOSIT_UNITS = 100_000;
+
+/** What the live pages still need before they can run, in words. Empty when they can. */
+export function liveMissing(config: Pick<AppConfig, "router" | "vault" | "facilitatorUrl" | "toolsUrl">): string[] {
+  const out: string[] = [];
+  if (!config.router || !config.vault) out.push("the router and vault addresses (NEXT_PUBLIC_ROUTER_ADDRESS and NEXT_PUBLIC_VAULT_ADDRESS)");
+  if (!config.facilitatorUrl) out.push("a facilitator (NEXT_PUBLIC_FACILITATOR_URL)");
+  if (!config.toolsUrl) out.push("a hosted tool server (NEXT_PUBLIC_TOOLS_URL)");
+  return out;
+}
+
 /** The names the app reads. The deployment guide and a test both read this list. */
 export const PUBLIC_ENV_NAMES = [
   "NEXT_PUBLIC_ROUTER_ADDRESS",
@@ -33,6 +52,8 @@ export const PUBLIC_ENV_NAMES = [
   "NEXT_PUBLIC_CHAIN_ID",
   "NEXT_PUBLIC_RPC_URL",
   "NEXT_PUBLIC_FACILITATOR_URL",
+  "NEXT_PUBLIC_TOOLS_URL",
+  "NEXT_PUBLIC_SESSION_CAP_QUSDC",
   "NEXT_PUBLIC_FROM_BLOCK",
   "NEXT_PUBLIC_GITHUB_URL",
   "NEXT_PUBLIC_SITE_URL",
@@ -101,6 +122,23 @@ export function readConfig(env: Partial<Record<PublicEnvName, string | undefined
     else problems.push("NEXT_PUBLIC_FACILITATOR_URL must be an https address, or an http address on this machine");
   }
 
+  let toolsUrl: string | null = null;
+  const rawTools = blank(env.NEXT_PUBLIC_TOOLS_URL);
+  if (rawTools !== undefined) {
+    const url = parseWebUrl(rawTools);
+    if (url) toolsUrl = url.toString().replace(/\/+$/, "");
+    else problems.push("NEXT_PUBLIC_TOOLS_URL must be an https address, or an http address on this machine");
+  }
+
+  let sessionCapUnits = DEFAULT_SESSION_CAP_UNITS;
+  const rawCap = blank(env.NEXT_PUBLIC_SESSION_CAP_QUSDC);
+  if (rawCap !== undefined) {
+    const m = /^(\d{1,3})(?:\.(\d{1,6}))?$/.exec(rawCap);
+    const units = m ? Number(m[1]) * 1_000_000 + Number((m[2] ?? "").padEnd(6, "0") || "0") : 0;
+    if (units > 0 && units <= MAX_SESSION_CAP_UNITS) sessionCapUnits = units;
+    else problems.push(`NEXT_PUBLIC_SESSION_CAP_QUSDC must be a number above 0 and at most 10, so ${DEFAULT_SESSION_CAP_UNITS / 1_000_000} is used`);
+  }
+
   let repoUrl: string | null = null;
   const rawRepo = blank(env.NEXT_PUBLIC_GITHUB_URL);
   if (rawRepo !== undefined) {
@@ -132,6 +170,8 @@ export function readConfig(env: Partial<Record<PublicEnvName, string | undefined
     vault,
     contractsConfigured: router !== null && vault !== null,
     facilitatorUrl,
+    toolsUrl,
+    sessionCapUnits,
     repoUrl,
     fromBlock,
     siteUrl,

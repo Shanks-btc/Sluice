@@ -13,7 +13,18 @@ import "@nomicfoundation/hardhat-ethers";
 import "@nomicfoundation/hardhat-chai-matchers";
 import type { HardhatUserConfig } from "hardhat/config";
 import { subtask } from "hardhat/config";
-import { TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD } from "hardhat/builtin-tasks/task-names";
+import { TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, TASK_TEST_RUN_MOCHA_TESTS } from "hardhat/builtin-tasks/task-names";
+
+// No test run opens a secret file (*.key, .env, .env.*, deployment.json, .local-mainnet) outside the temp folder. The guard is installed
+// before any test file is loaded, and a run in which something tried is a failed run, whichever test folder it was.
+subtask(TASK_TEST_RUN_MOCHA_TESTS, async (_args, _hre, runSuper) => {
+  const guard = require("./test/helpers/secret-guard") as typeof import("./test/helpers/secret-guard");
+  guard.install();
+  const failures = (await runSuper()) as number;
+  const refused = guard.violations();
+  for (const v of refused) console.error(`secret file guard: ${v.operation} was refused for ${v.path}`);
+  return failures + refused.length;
+});
 
 subtask(TASK_COMPILE_SOLIDITY_GET_SOLC_BUILD, async (args: { solcVersion: string }, _hre, runSuper) => {
   if (args.solcVersion === "0.8.24") {

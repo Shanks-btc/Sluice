@@ -1,0 +1,16 @@
+# The tests read the repository's own files (the README, the documents, the sources the mutation checks change) and compare them with
+# text that has LF line endings. On Windows, git's autocrlf setting turns a checkout's files into CRLF, which breaks those comparisons.
+# Text files are kept LF in the working tree whatever that setting says. The rules below the first one win for the files they name.
+* text=auto eol=lf
+
+# Binary files and key-like files are never changed by git: no line-ending conversion, no text diff.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.key binary
+*.pem binary
+*.keystore binary

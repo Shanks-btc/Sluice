@@ -1,13 +1,14 @@
 // Reads the web app's source and pulls out the words a visitor can read: JSX text, labels, and string literals that are not module
 // names or markup plumbing. The honesty tests scan these, so a claim cannot hide in a component. Uses the TypeScript compiler's parser.
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import * as ts from "typescript";
+import { safeReaddir } from "../../src/secret-paths";
 
 export const webRoot = join(__dirname, "..", "..", "apps", "web");
 
 export function sourceFiles(dir = "src", accept: (name: string) => boolean = (n) => /\.(ts|tsx)$/.test(n)): string[] {
-  return readdirSync(join(webRoot, dir)).flatMap((name) => {
+  return safeReaddir(join(webRoot, dir)).flatMap((name) => {
     const rel = `${dir}/${name}`;
     if (name === "node_modules" || name === ".next" || name === "generated") return [];
     return statSync(join(webRoot, rel)).isDirectory() ? sourceFiles(rel, accept) : accept(name) ? [rel] : [];

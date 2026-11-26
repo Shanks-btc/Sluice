@@ -28,7 +28,7 @@ export function WalletBar() {
         <span className="spacer" />
         {wallet.status === "unavailable" ? (
           <p className="muted" data-testid="no-wallet">
-            No wallet found in this browser. Install QIE Wallet or MetaMask, then reload.
+            No wallet found in this browser. Install QIE Wallet or MetaMask, then reload. On a phone, open this page from the browser inside the wallet app.
           </p>
         ) : wallet.status === "connected" ? (
           <span className="tag tag-success">Connected</span>

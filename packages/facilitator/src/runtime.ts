@@ -5,7 +5,8 @@ import type { Provider } from "ethers";
 import type { Server } from "node:http";
 import type { FacilitatorEnv } from "./env";
 import { KillSwitch } from "./killswitch";
-import { TimedJsonRpcProvider, createLogger } from "@sluice/sdk";
+import { FailoverJsonRpcProvider, NoHealthyEndpoint, createLogger, describeSelection, orderedUrls, requireNodeChain, resolveEndpoint } from "@sluice/sdk";
+import { EnvError } from "./env";
 import type { Logger } from "@sluice/sdk";
 import { createServer, listen } from "./server";
 import { Facilitator } from "./service";
@@ -32,15 +33,35 @@ export type StartOptions = {
 export async function startFacilitator(env: FacilitatorEnv, options: StartOptions = {}): Promise<Running> {
   const key = env.relayerKey();
   const logger = createLogger({ write: options.write, level: env.logLevel, secrets: [key], base: { service: "sluice-facilitator" } });
-  let made: TimedJsonRpcProvider | undefined;
+  let made: FailoverJsonRpcProvider | undefined;
   if (!options.provider) {
     const network = Network.from(env.chainId);
+    // The endpoint: one named by SLUICE_RPC_URL as given, otherwise the first of QIE's public endpoints that answers with this chain's id,
+    // with the others as fallbacks for reads (a dead endpoint at start-up, or later, does not stop the service).
+    let urls = [env.rpcUrl];
+    if (!env.rpcNamed && (env.network === "mainnet" || env.network === "testnet")) {
+      try {
+        const sel = await resolveEndpoint(env.network, undefined);
+        logger.info("rpc endpoint chosen", { endpoint: describeSelection(sel) });
+        urls = orderedUrls(sel);
+      } catch (err) {
+        throw new EnvError(`refusing to start: ${err instanceof NoHealthyEndpoint ? err.message : "no RPC endpoint could be probed"}`);
+      }
+    }
     // cacheTimeout -1: the relayer sends in sequence and must always read its current nonce, never a 250 ms old one.
     // Every request has a time limit, so a node that stops answering cannot hold a batch (and the queue behind it) for ever.
-    made = new TimedJsonRpcProvider(env.rpcUrl, network, { staticNetwork: network, cacheTimeout: -1 }, env.rpcTimeoutMs);
+    made = new FailoverJsonRpcProvider(urls, network, { staticNetwork: network, cacheTimeout: -1 }, env.rpcTimeoutMs);
     made.pollingInterval = 1_000;
+    // A provider made with a fixed network never asks the node which chain it is on, so ask it here: a facilitator set to mainnet that is
+    // pointed at another chain's node (a named SLUICE_RPC_URL is used as given) must stop before it reads or sends anything.
+    try {
+      await requireNodeChain(made, env.chainId, env.network);
+    } catch (err) {
+      made.destroy();
+      throw new EnvError(`refusing to start: ${err instanceof Error ? err.message : "the RPC's chain could not be checked"}`);
+    }
   }
-  const provider: Provider = options.provider ?? (made as TimedJsonRpcProvider);
+  const provider: Provider = options.provider ?? (made as FailoverJsonRpcProvider);
   // Opened before anything else that costs money: a store that cannot be read stops the start here.
   const store: Store = env.statePath ? new FileStore(env.statePath) : new MemoryStore();
   let facilitator: Facilitator;
@@ -68,6 +89,7 @@ export async function startFacilitator(env: FacilitatorEnv, options: StartOption
     ipLimit: { max: env.ipPerMinute, windowMs: 60_000 },
     payerLimit: { max: env.payerPerMinute, windowMs: 60_000 },
     trustedProxyHops: env.trustedProxyHops,
+    metricsToken: env.metricsToken(),
     logger,
   });
   const port = await listen(server, env.port, env.host);

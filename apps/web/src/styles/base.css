@@ -118,6 +118,11 @@ ol {
   display: grid;
   gap: 16px;
 }
+/* A grid's single column is as wide as its widest item's smallest size, so one table or long word would widen the whole page on a phone.
+   An item that may shrink below its content lets a table scroll inside its own box instead. */
+.stack > * {
+  min-width: 0;
+}
 .row {
   display: flex;
   flex-wrap: wrap;

@@ -5,7 +5,7 @@ import { DOC_SOURCES } from "../lib/content-types";
 import type { DocGroup } from "../lib/content-types";
 import type { Heading } from "../lib/markdown";
 
-const GROUPS: DocGroup[] = ["Start", "Reference", "Packages"];
+const GROUPS: DocGroup[] = ["Start", "Reference", "Packages", "Legal"];
 
 export function DocsSidebar({ current }: { current?: string }) {
   return (

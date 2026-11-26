@@ -52,7 +52,7 @@ describe("Facilitator crash recovery: the process is killed mid-batch", function
     t.cleanup();
   });
 
-  const start = async (): Promise<Spawned> => {
+  const start = async (flushMs = "500"): Promise<Spawned> => {
     const p = await spawnFacilitator({
       SLUICE_NETWORK: "local",
       SLUICE_RPC_URL: proxy.url,
@@ -60,7 +60,7 @@ describe("Facilitator crash recovery: the process is killed mid-batch", function
       SLUICE_RELAYER_KEY: relayerKey,
       SLUICE_FACILITATOR_PORT: "0",
       SLUICE_FACILITATOR_STATE: t.journal,
-      SLUICE_FACILITATOR_FLUSH_MS: "500",
+      SLUICE_FACILITATOR_FLUSH_MS: flushMs,
     });
     running.push(p);
     return p;
@@ -86,9 +86,14 @@ describe("Facilitator crash recovery: the process is killed mid-batch", function
 
   it("killed after the node has the transaction and before the process knows its hash: the next process finds it settled and sends nothing", async () => {
     proxy.mode = "hold-after-send";
-    const a = await start();
+    // The payments are made first and posted together, so that all three are queued before the process's first flush (it flushes every
+    // 500 ms from when it starts). Posting them one at a time, as this test used to, let a flush fall between two of them on a slow
+    // machine, and the batch then held two payments.
+    // The first process flushes every 2 s instead of 500 ms: three posts that each check the chain can take longer than half a second when
+    // the machine is busy (a full run of this suite), and a flush between two of them sent a batch of two.
     const made = await payments(3);
-    for (const m of made) expect((await post(a, "/settle", verifyBody(m))).success).to.equal(true);
+    const a = await start("2000");
+    await Promise.all(made.map(async (m) => expect((await post(a, "/settle", verifyBody(m))).success).to.equal(true)));
     await proxy.sendSeen; // the node has the batch and the process has not been told
     await a.kill();
     expect(await settledOnChain()).to.equal(3); // it did settle on the chain

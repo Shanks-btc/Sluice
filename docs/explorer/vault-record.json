@@ -1,0 +1,71 @@
+{
+  "about": "QIE's explorer's own answers about the AgentVault, as received. Long fields are replaced by keccak256 hashes. This is not an evidence row.",
+  "explorer": "https://mainnet.qie.digital",
+  "chainId": 1990,
+  "vault": "0xC8bfECBF9Dc5d18943b38873705DeeE9D13d751B",
+  "router": "0xf6F4C1Cc954B1798d134750438ada58768978716",
+  "readAt": "2026-11-26T06:11:51Z",
+  "GET /api/v2/addresses/{vault}": {
+    "block_number_balance_updated_at": 12119321,
+    "coin_balance": "0",
+    "creation_transaction_hash": null,
+    "creator_address_hash": null,
+    "ens_domain_name": null,
+    "exchange_rate": "0.162166",
+    "has_beacon_chain_withdrawals": false,
+    "has_decompiled_code": false,
+    "has_logs": true,
+    "has_token_transfers": false,
+    "has_tokens": false,
+    "has_validated_blocks": false,
+    "hash": "0xC8bfECBF9Dc5d18943b38873705DeeE9D13d751B",
+    "implementations": [],
+    "is_contract": true,
+    "is_scam": false,
+    "is_verified": true,
+    "metadata": null,
+    "name": "AgentVault",
+    "private_tags": [],
+    "proxy_type": null,
+    "public_tags": [],
+    "token": null,
+    "watchlist_address_id": null,
+    "watchlist_names": []
+  },
+  "GET /api/v2/smart-contracts/{vault}": {
+    "is_verified": true,
+    "is_fully_verified": true,
+    "is_partially_verified": false,
+    "is_changed_bytecode": false,
+    "name": "AgentVault",
+    "compiler_version": "v0.8.24+commit.e11b9ed9",
+    "evm_version": "shanghai",
+    "optimization_enabled": true,
+    "optimization_runs": 200,
+    "verified_at": "2026-11-26T06:07:10.668022Z",
+    "file_path": "contracts/AgentVault.sol",
+    "creation_bytecode": null,
+    "constructor_args": null,
+    "license_type": "none",
+    "is_verified_via_sourcify": false,
+    "is_verified_via_eth_bytecode_db": false,
+    "deployed_bytecode_keccak256": "0x96cddf2d6eb43d8845c4d435d2cbd34af60129cc850896e0851b43b094adb517",
+    "source_keccak256": {
+      "contracts/AgentVault.sol": "0x5085208557f14692a069f5729cfb8b8c5864c8cac69b32f79772a642a4d5f087",
+      "contracts/base/Eip712.sol": "0x444cc35f136b5df169d7eaf31bf819eb21e28ed2a0f14916569c08917582846e",
+      "contracts/interfaces/ISluiceErrors.sol": "0x79bc4f7326559c7404d85531739c1a827a09bfe6fe008465664107fee4b0e129",
+      "contracts/libraries/SignatureLib.sol": "0x5c546430cceaa6d2517ac50a2d1d76809ccca303b843777079908f9335fc3fe5"
+    }
+  },
+  "GET /api?module=contract&action=getcontractcreation&contractaddresses={vault},{router}": {
+    "message": "OK",
+    "result": [
+      {
+        "contractAddress": "0xf6f4c1cc954b1798d134750438ada58768978716",
+        "contractCreator": "0x539e8616e5d1dd6c5b4f46055242eef111209b70",
+        "txHash": "0xd30777bca5c2e0d2538c52557ac4faba2665ab42c558ca343fe8d1b296143b33"
+      }
+    ],
+    "status": "1"
+  }
+}

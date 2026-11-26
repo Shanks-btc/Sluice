@@ -66,6 +66,10 @@ export interface Store {
   pendingFor(payer: string): bigint;
   /** The same, for one (payer, agent) pair, which is what an agent's session budget is spent against. */
   pendingForAgent(payer: string, signer: string): bigint;
+  /** The settled intent that was updated last, for /health: when the last batch landed and in which block. */
+  latestSettled(): IntentRecord | undefined;
+  /** How many intents are in each state, for the private metrics. */
+  countByStatus(): Record<Status, number>;
   /** Counters by key, for the per-day caps. */
   usage(key: string): Usage;
   addUsage(key: string, amount: bigint): void;
@@ -138,6 +142,18 @@ export class MemoryStore implements Store {
       }
     }
     return total;
+  }
+  latestSettled() {
+    let latest: IntentRecord | undefined;
+    for (const r of this.records.values()) {
+      if (r.status === "settled" && (latest === undefined || r.updatedAt >= latest.updatedAt)) latest = r;
+    }
+    return latest;
+  }
+  countByStatus() {
+    const counts: Record<Status, number> = { queued: 0, submitted: 0, settled: 0, skipped: 0, expired: 0, failed: 0 };
+    for (const r of this.records.values()) counts[r.status] += 1;
+    return counts;
   }
   usage(key: string) {
     return this.counters.get(key) ?? { count: 0, amount: 0n };

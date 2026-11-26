@@ -17,10 +17,11 @@ export function useFlowDeps(reader: ChainReader | null, facilitatorUrl?: string 
       wallet: wallet.provider,
       account: wallet.account,
       chainId: config.chainId,
+      network: config.network,
       reader,
       facilitator: url ? new FacilitatorClient({ url }) : undefined,
       facilitatorUrl: url,
       now: () => Math.floor(Date.now() / 1000),
     } satisfies FlowDeps;
-  }, [reader, wallet.provider, wallet.account, wallet.status, wallet.network, config.chainId, url]);
+  }, [reader, wallet.provider, wallet.account, wallet.status, wallet.network, config.chainId, config.network, url]);
 }

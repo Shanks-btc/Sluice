@@ -9,16 +9,21 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { parseEther } from "ethers";
 import { USDC, signedIntent } from "../test/helpers";
 import { MockWallet } from "../test/helpers/mock-wallet";
 import type { MockOptions } from "../test/helpers/mock-wallet";
-import { fundWallet, freshChain, startStack } from "../test/helpers/stack";
+import { depositFor, fundWallet, freshChain, startStack } from "../test/helpers/stack";
 import type { Stack } from "../test/helpers/stack";
+import { fakeExplorer } from "../test/helpers/explorer";
+import { createToolServer, readToolServerEnv } from "../examples/paid-tools/src";
+import type { ToolServer } from "../examples/paid-tools/src";
 import { DOC_SOURCES } from "../apps/web/src/lib/content-types";
 import { IDEA } from "../apps/web/src/content/copy";
+import { parseEvidenceStrict } from "../src/evidence";
 
 const root = join(__dirname, "..");
 const webDir = join(root, "apps", "web");
@@ -71,7 +76,7 @@ async function waitFor(url: string): Promise<void> {
 }
 
 /** A browser context whose window.ethereum is a mock wallet running in this process. */
-async function walletContext(browser: import("playwright-core").Browser, stack: Stack, options: MockOptions, qusdc: bigint, qie: bigint, opts: { viewport?: { width: number; height: number }; colorScheme?: "light" | "dark"; reducedMotion?: "reduce" | "no-preference" } = {}) {
+async function walletContext(browser: import("playwright-core").Browser, stack: Stack, options: MockOptions, qusdc: bigint, qie: bigint, opts: { viewport?: { width: number; height: number }; colorScheme?: "light" | "dark"; reducedMotion?: "reduce" | "no-preference"; lateMs?: number } = {}) {
   const mock = new MockWallet(stack.provider, options);
   await fundWallet(stack, mock.wallet, qusdc, qie);
   const context = await browser.newContext({ viewport: opts.viewport ?? { width: 1280, height: 900 }, colorScheme: opts.colorScheme ?? "light", reducedMotion: opts.reducedMotion ?? "no-preference" });
@@ -83,18 +88,23 @@ async function walletContext(browser: import("playwright-core").Browser, stack: 
       return { error: { code: e.code ?? -32603, message: e.message ?? "failed" } };
     }
   });
-  await context.addInitScript(() => {
+  await context.addInitScript((lateMs: number) => {
     const w = window as unknown as { ethereum?: unknown; __sluiceWallet: (a: unknown) => Promise<{ result?: unknown; error?: { code: number; message: string } }> };
-    w.ethereum = {
-      request: async (args: unknown) => {
-        const answer = await w.__sluiceWallet(args);
-        if (answer.error) throw Object.assign(new Error(answer.error.message), { code: answer.error.code });
-        return answer.result;
-      },
-      on: () => undefined,
-      removeListener: () => undefined,
+    const install = () => {
+      w.ethereum = {
+        request: async (args: unknown) => {
+          const answer = await w.__sluiceWallet(args);
+          if (answer.error) throw Object.assign(new Error(answer.error.message), { code: answer.error.code });
+          return answer.result;
+        },
+        on: () => undefined,
+        removeListener: () => undefined,
+      };
     };
-  });
+    // A wallet app's browser on a phone can put the wallet on the page after it has loaded, and says so with this event.
+    if (lateMs > 0) setTimeout(() => (install(), window.dispatchEvent(new Event("ethereum#initialized"))), lateMs);
+    else install();
+  }, opts.lateMs ?? 0);
   return { mock, context };
 }
 
@@ -121,6 +131,27 @@ async function flowDone(page: Page, timeout = 30_000): Promise<void> {
   if (await failed.isVisible()) throw new Error(`the flow failed: ${(await failed.innerText()).replace(/s+/g, " ")}`);
 }
 
+/** What is wider than the screen, so a sideways scroll names its cause instead of only its size. */
+async function wideElements(page: Page): Promise<string> {
+  const found = await page.evaluate(() => {
+    const limit = document.documentElement.clientWidth;
+    const out: string[] = [];
+    const over = (el: Element) => {
+      const r = (el as HTMLElement).getBoundingClientRect();
+      return r.width > 0 && r.right > limit + 0.5;
+    };
+    // Only the innermost elements that stick out: their parents stick out because of them.
+    for (const el of document.querySelectorAll("body *")) {
+      if (!over(el) || [...el.children].some(over)) continue;
+      const r = (el as HTMLElement).getBoundingClientRect();
+      out.push(`${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ""}${el.getAttribute("data-testid") ? `[${el.getAttribute("data-testid")}]` : ""}.${String(el.className).split(" ")[0] ?? ""} right=${Math.round(r.right)} width=${Math.round(r.width)} "${(el.textContent ?? "").trim().slice(0, 40)}"`);
+      if (out.length >= 8) break;
+    }
+    return out;
+  });
+  return found.join("; ");
+}
+
 async function waitText(page: Page, testId: string, pattern: RegExp, timeout = 15_000): Promise<string> {
   const deadline = Date.now() + timeout;
   let last = "";
@@ -136,6 +167,21 @@ async function main(): Promise<void> {
   await freshChain();
   const stack = await startStack({ feeBps: 100, corsOrigins: [`http://127.0.0.1:${PORT_EMPTY}`, `http://127.0.0.1:${PORT_LIVE}`] });
   const base = (port: number) => `http://127.0.0.1:${port}`;
+  // The hosted tool server, run in this process against the local chain, paid to the builder's throwaway address. Only the live page's
+  // origin may read its answers.
+  const tools: ToolServer = await createToolServer({
+    env: readToolServerEnv({
+      SLUICE_NETWORK: "local",
+      SLUICE_ROUTER: stack.routerAddress,
+      SLUICE_PAYEE: stack.builder.address,
+      SLUICE_FACILITATOR_URL: stack.facilitatorUrl,
+      SLUICE_RPC_URL: stack.rpcUrl,
+      SLUICE_TOOLS_PORT: "0",
+      SLUICE_TOOLS_CORS_ORIGINS: base(PORT_LIVE),
+    }),
+    explorer: fakeExplorer(stack.provider),
+  });
+  const toolsUrl = `http://127.0.0.1:${await tools.listen()}`;
   const empty = startNext(PORT_EMPTY, { SLUICE_RPC_URL: stack.rpcUrl, SLUICE_EXPLORER_URL: "http://127.0.0.1:9" });
   const live = startNext(PORT_LIVE, {
     NEXT_PUBLIC_ROUTER_ADDRESS: stack.routerAddress,
@@ -143,6 +189,7 @@ async function main(): Promise<void> {
     NEXT_PUBLIC_CHAIN_ID: "1990",
     NEXT_PUBLIC_RPC_URL: stack.rpcUrl,
     NEXT_PUBLIC_FACILITATOR_URL: stack.facilitatorUrl,
+    NEXT_PUBLIC_TOOLS_URL: toolsUrl,
     NEXT_PUBLIC_FROM_BLOCK: "0",
     SLUICE_RPC_URL: stack.rpcUrl,
     SLUICE_EXPLORER_URL: "http://127.0.0.1:9",
@@ -159,7 +206,7 @@ async function main(): Promise<void> {
     const A = base(PORT_EMPTY);
 
     const slugs = DOC_SOURCES.map((d) => `/docs/${d.slug}`);
-    for (const path of ["/", "/demo", "/builder", "/wallet", "/docs", "/evidence", ...slugs]) {
+    for (const path of ["/", "/demo", "/builder", "/wallet", "/status", "/security", "/terms", "/privacy", "/docs", "/evidence", ...slugs]) {
       for (const [label, size] of [["desktop", { width: 1440, height: 900 }], ["phone", { width: 390, height: 844 }]] as const) {
         await check(`${path} renders at ${label} size with no console error, no failed request and no sideways scroll`, async () => {
           const context = await browser.newContext({ viewport: size });
@@ -168,7 +215,7 @@ async function main(): Promise<void> {
           assert.equal((page as unknown as { __status: number }).__status, 200);
           assert.ok((await page.locator("h1").count()) >= 1, "has a heading");
           const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-          assert.equal(overflow, 0, "page scrolls sideways");
+          assert.equal(overflow, 0, `page scrolls sideways: ${await wideElements(page)}`);
           assert.deepEqual(problems, []);
           await context.close();
         });
@@ -197,12 +244,32 @@ async function main(): Promise<void> {
       await page.close();
     });
 
-    await check("the landing page shows no mainnet transactions, says so, and labels the fork sample as not mainnet", async () => {
+    // What the pages show of the chain follows docs/EVIDENCE.md, whatever it holds on the day this runs.
+    const evidence = parseEvidenceStrict(await readFile(join(root, "docs", "EVIDENCE.md"), "utf8"));
+    const onMainnet = evidence.filter((r) => r.network === "mainnet");
+    const onTestnet = evidence.filter((r) => r.network === "testnet");
+
+    await check("the landing page shows the evidence file's mainnet rows and no other transaction, or says there are none and labels the fork sample as not mainnet", async () => {
       const page = await open(plain, A);
-      assert.match(await text(page, "proof-empty"), /No mainnet transactions recorded yet/);
-      assert.match(await text(page, "fork-sample"), /Sample from a local fork — not mainnet/);
-      assert.equal(await page.locator('a[href*="mainnet.qie.digital/tx"]').count(), 0);
-      assert.match(await text(page, "hero-status"), /mainnet transactions in the evidence file: 0/);
+      assert.match(await text(page, "hero-status"), new RegExp(`mainnet rows in the evidence file: ${onMainnet.length}[,.]`));
+      if (onMainnet.length > 0) {
+        // The count never stands alone: how many of the rows are the project's own is said beside it and under the transactions.
+        assert.match(await text(page, "hero-status"), /them about the project's own wallets/);
+        assert.match(await text(page, "proof-own"), /about the project's own wallets, by the founder list/);
+      }
+      const links = await page.locator('a[href*="mainnet.qie.digital/tx"]').evaluateAll((els) => els.map((e) => e.getAttribute("href")));
+      if (onMainnet.length === 0) {
+        assert.match(await text(page, "proof-empty"), /No mainnet transactions recorded yet/);
+        assert.match(await text(page, "fork-sample"), /Sample from a local fork — not mainnet/);
+        assert.deepEqual(links, []);
+      } else {
+        const shown = Math.min(onMainnet.length, 6);
+        assert.equal(await page.locator('[data-testid="proof-strip"] li[data-kind="mainnet"]').count(), shown);
+        assert.equal(await page.getByTestId("proof-empty").count(), 0);
+        assert.equal(await page.getByTestId("fork-sample").count(), 0);
+        assert.equal(links.length, shown);
+        for (const href of links) assert.ok(onMainnet.some((r) => href === `https://mainnet.qie.digital/tx/${r.hash}`), `a link the evidence file does not hold: ${href}`);
+      }
       await page.close();
     });
 
@@ -242,10 +309,15 @@ async function main(): Promise<void> {
       await page.close();
     });
 
-    await check("the evidence page shows empty tables and says no router is configured, never zero", async () => {
+    await check("the evidence page shows each network's rows, or an empty table where there are none, and says no router is configured, never zero", async () => {
       const page = await open(plain, `${A}/evidence`);
-      await visible(page, "evidence-mainnet-empty");
-      await visible(page, "evidence-testnet-empty");
+      for (const [network, held] of [["mainnet", onMainnet], ["testnet", onTestnet]] as const) {
+        await visible(page, `evidence-${network}`);
+        assert.equal(await page.locator(`[data-testid="evidence-${network}"] tbody tr`).count(), held.length, `${network} rows`);
+        assert.equal(await page.getByTestId(`evidence-${network}-empty`).count(), held.length === 0 ? 1 : 0, `${network} empty state`);
+        assert.equal(await page.getByTestId(`evidence-${network}-own`).count(), held.length === 0 ? 0 : 1, `${network} says whose rows they are`);
+      }
+      assert.match(await text(page, "vault-source"), /pnpm live:vaultcheck/);
       assert.match(await text(page, "summary-empty"), /No router is configured/);
       assert.equal(await page.getByTestId("paid-calls").count(), 0);
       assert.match(await page.locator("body").innerText(), /pnpm evidence:check/);
@@ -268,8 +340,21 @@ async function main(): Promise<void> {
       await page.close();
     });
 
+    await check("the demo opens on the real payment, with the sandbox as a second tab that is not selected", async () => {
+      const page = await open(plain, `${A}/demo`);
+      assert.equal(await page.getByTestId("tab-live").getAttribute("aria-selected"), "true");
+      assert.equal(await page.getByTestId("tab-sandbox").getAttribute("aria-selected"), "false");
+      assert.match(await text(page, "tab-sandbox"), /Sandbox \(no funds\)/);
+      assert.equal(await page.getByTestId("panel-sandbox").isVisible(), false);
+      await visible(page, "live-unconfigured");
+      assert.match(await text(page, "live-unconfigured"), /not set up for real payments yet/);
+      assert.match(await text(page, "live-unconfigured"), /Nothing on this page is simulated/);
+      await page.close();
+    });
+
     await check("the demo simulation runs to completion and keeps its banner on screen", async () => {
       const page = await open(plain, `${A}/demo`);
+      await page.getByTestId("tab-sandbox").click();
       assert.match(await text(page, "sim-banner"), /Simulated — no real funds, no chain/);
       await page.getByTestId("sim-run").click();
       await visible(page, "sim-done", 30_000);
@@ -283,6 +368,7 @@ async function main(): Promise<void> {
     await check("with reduced motion the walkthrough advances one step per press and never by itself", async () => {
       const context = await browser.newContext({ reducedMotion: "reduce", viewport: { width: 1280, height: 900 } });
       const page = await open(context, `${A}/demo`);
+      await page.getByTestId("tab-sandbox").click();
       await page.getByTestId("sim-run").click();
       await page.waitForTimeout(2500);
       assert.match(await text(page, "sim-progress"), /Step 1 of 7/);
@@ -293,6 +379,7 @@ async function main(): Promise<void> {
 
     await check("the demo's refusal examples show the spec's code, and 'show every step' and reset work", async () => {
       const page = await open(plain, `${A}/demo`);
+      await page.getByTestId("tab-sandbox").click();
       await page.selectOption("#refusal", { label: "the client edited the price in its copy of the terms" });
       assert.match(await text(page, "refusal-result"), /sluice_accepted_mismatch/);
       await page.getByTestId("sim-all").click();
@@ -728,13 +815,395 @@ async function main(): Promise<void> {
       await page.close();
     });
 
+    // ===================================================================== the live flow
+    // These are tests. The chain is a local node, the tokens have no value, and the tool server and the facilitator are processes this
+    // script started. They check what the page does, step by step. They are not evidence of anything on mainnet.
+    process.stderr.write("\nthe live flow (a test on a local chain, with throwaway keys)\n");
+
+    async function payDone(page: Page, timeout = 30_000): Promise<void> {
+      const done = page.getByTestId("pay-done");
+      const failed = page.getByTestId("pay-failed");
+      await Promise.race([done.waitFor({ state: "visible", timeout }), failed.waitFor({ state: "visible", timeout })]);
+      if (await failed.isVisible()) throw new Error(`the payment failed: ${(await failed.innerText()).replace(/\s+/g, " ")}`);
+    }
+
+    /** A funded wallet, with a prepaid balance put in from outside the page, on a page where it is connected. */
+    async function connectedPayer(path: string, options: MockOptions = {}, prepaid: bigint = USDC("0.1"), opts: { viewport?: { width: number; height: number }; qie?: bigint } = {}) {
+      const problems: Problems = [];
+      const { mock, context } = await walletContext(browser, stack, options, USDC("5"), opts.qie ?? parseEther("1"), opts.viewport ? { viewport: opts.viewport } : {});
+      if (prepaid > 0n) await depositFor(stack, mock.wallet, prepaid);
+      const page = await open(context, `${L}${path}`, problems);
+      await page.getByTestId("connect").click();
+      return { mock, context, page, problems };
+    }
+
+    /** Opens the payment review, confirms it and closes the result. */
+    async function payOnce(page: Page): Promise<void> {
+      await page.getByTestId("pay-review").click();
+      await visible(page, "pay-dialog");
+      await page.getByTestId("pay-confirm").click();
+      await payDone(page);
+      await page.getByTestId("pay-close").click();
+    }
+
+    /** Has the facilitator settle what it holds, then waits for the page to show the payment as settled. */
+    async function seeSettled(page: Page): Promise<void> {
+      await stack.facilitator.flush();
+      const deadline = Date.now() + 30_000;
+      let last = "";
+      while (Date.now() < deadline) {
+        last = await page.getByTestId("settlement-status").first().innerText().catch(() => "");
+        if (/settled on chain/i.test(last)) return;
+        const again = page.getByTestId("settlement-check").first();
+        if (await again.isVisible().catch(() => false)) await again.click().catch(() => undefined);
+        await page.waitForTimeout(500);
+      }
+      throw new Error(`the payment never showed as settled; the page said: ${last.slice(0, 160)}`);
+    }
+
+    await check("live: /demo opens on the real payment, names the local network as having no value, and reads the balances once connected", async () => {
+      const { context, page, problems } = await connectedPayer("/demo", {}, 0n);
+      assert.equal(await page.getByTestId("tab-live").getAttribute("aria-selected"), "true");
+      assert.equal(await page.getByTestId("panel-sandbox").isVisible(), false);
+      assert.match(await text(page, "live-banner"), /funds on this network have no value/);
+      await visible(page, "live-balances-view");
+      assert.match(await text(page, "live-qusdc"), /5\.000000/);
+      assert.match(await text(page, "live-prepaid"), /0\.000000/);
+      assert.match(await text(page, "live-qie"), /1\.0000/);
+      assert.equal(await page.inputValue("#live-deposit-amount"), "0.1", "the deposit starts at 0.10 QUSDC");
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+
+    await check("live: a deposit above the page's cap is refused in words before any review opens, and nothing is sent", async () => {
+      const { mock, context, page } = await connectedPayer("/demo", {}, 0n);
+      await visible(page, "live-balances-view");
+      await page.fill("#live-deposit-amount", "5");
+      await page.getByTestId("live-deposit-review").click();
+      assert.match(await text(page, "live-deposit-error"), /at most 1\.000000 QUSDC/);
+      assert.equal(await page.getByTestId("flow-dialog").isVisible(), false);
+      await page.fill("#live-deposit-amount", "abc");
+      await page.getByTestId("live-deposit-review").click();
+      assert.ok((await text(page, "live-deposit-error")).length > 10);
+      assert.equal(mock.count("eth_sendTransaction"), 0);
+      await context.close();
+    });
+
+    await check("live: the deposit review shows the approval for exactly the amount, cancel sends nothing, and confirm deposits and updates the balance", async () => {
+      const { mock, context, page } = await connectedPayer("/demo", {}, 0n);
+      await visible(page, "live-balances-view");
+      await page.getByTestId("live-deposit-review").click();
+      await visible(page, "flow-dialog");
+      const fields = await text(page, "flow-fields");
+      assert.match(fields, /Approve the router to move exactly 0\.100000 QUSDC/);
+      assert.match(fields, /Network fee\s+up to/);
+      assert.match(fields, /Network\s+Local node or fork, chain 1990 \(no real funds\)/, "a local node is never described as real funds");
+      assert.equal(mock.count("eth_sendTransaction"), 0, "nothing is sent while the review is open");
+      await page.getByTestId("flow-cancel").click();
+      assert.equal(mock.count("eth_sendTransaction"), 0, "nothing is sent after cancel");
+      await page.getByTestId("live-deposit-review").click();
+      await page.getByTestId("flow-confirm").click();
+      await flowDone(page);
+      assert.equal(mock.count("eth_sendTransaction"), 2);
+      assert.equal(await stack.router.payerBalance(mock.address), USDC("0.1"));
+      await page.getByTestId("flow-close").click();
+      await waitText(page, "live-prepaid", /0\.100000/);
+      await context.close();
+    });
+
+    await check("live: with no QIE the page says what the facilitator will send, the wallet signs without sending, and the deposit lands", async () => {
+      const { mock, context, page } = await connectedPayer("/demo", {}, 0n, { qie: 0n });
+      await visible(page, "zero-qie-note");
+      assert.match(await text(page, "zero-qie-note"), /facilitator will send you exactly the QIE/);
+      await page.getByTestId("live-deposit-review").click();
+      await visible(page, "flow-dialog");
+      const dialog = await text(page, "flow-dialog");
+      assert.match(dialog, /Deposit QUSDC with no QIE/);
+      assert.match(dialog, /Gas top-up/);
+      assert.match(dialog, /sign two transactions without sending them/);
+      assert.equal(mock.count("eth_signTransaction"), 0, "nothing is signed while the review is open");
+      await page.getByTestId("flow-confirm").click();
+      await flowDone(page);
+      assert.equal(mock.count("eth_sendTransaction"), 0);
+      assert.equal(mock.count("eth_signTransaction"), 2);
+      assert.equal(await stack.router.payerBalance(mock.address), USDC("0.1"));
+      await context.close();
+    });
+
+    await check("live: a paid call shows its price, payee and what is signed before the wallet opens; cancel signs nothing; confirm returns the tool's answer, then the settlement with a receipt", async () => {
+      const problems: Problems = [];
+      const before = await stack.router.earnings(stack.builder.address);
+      const { mock, context, page } = await connectedPayer("/demo");
+      await visible(page, "tool-select");
+      assert.match(await text(page, "tool-select"), /token_risk_check: 0\.01 QUSDC/);
+      await page.getByTestId("pay-review").click();
+      await visible(page, "pay-dialog");
+      const fields = await text(page, "pay-fields");
+      assert.match(fields, /Price\s+0\.010000 QUSDC/);
+      assert.match(fields, new RegExp(`Paid to\\s+${stack.builder.address}`, "i"));
+      assert.match(fields, new RegExp(`From\\s+${mock.address}`, "i"));
+      assert.match(fields, /Prepaid balance\s+0\.100000 QUSDC now, 0\.090000 QUSDC after/);
+      assert.match(fields, /Network fee\s+None for you/);
+      assert.match(fields, /Network\s+Local node or fork, chain 1990 \(no real funds\)/, "a local node is never described as real funds");
+      assert.doesNotMatch(await text(page, "pay-dialog"), /real QUSDC|QIE mainnet/);
+      assert.match(await text(page, "pay-dialog"), /Nothing is signed until you press Confirm/);
+      assert.equal(mock.count("eth_signTypedData_v4"), 0, "nothing is signed while the review is open");
+      await page.getByTestId("pay-cancel").click();
+      assert.equal(mock.count("eth_signTypedData_v4"), 0, "nothing is signed after cancel");
+      await page.getByTestId("pay-review").click();
+      await page.getByTestId("pay-confirm").click();
+      await payDone(page);
+      assert.equal(mock.count("eth_signTypedData_v4"), 1);
+      assert.equal(mock.count("eth_sendTransaction"), 0, "a call is paid by signing, not by sending");
+      await page.getByTestId("pay-close").click();
+      await visible(page, "paid-result");
+      assert.ok((await text(page, "pay-output")).trim().length > 20, "the tool's answer is on the page");
+      assert.match((await page.getByTestId("pay-signature").textContent()) ?? "", /^0x[0-9a-f]{6,}/i, "the signature the person made is shown (it is in a closed details)");
+      await seeSettled(page);
+      assert.match(await text(page, "receipt"), /0x[0-9a-f]{6,}/i);
+      assert.equal((await stack.router.earnings(stack.builder.address)) - before, USDC("0.0099"), "the builder was credited the price less the 1% fee, once");
+      assert.equal(await stack.router.payerBalance(mock.address), USDC("0.09"));
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+
+    await check("live: pressing Confirm twice signs once and charges once", async () => {
+      const before = await stack.router.earnings(stack.builder.address);
+      const { mock, context, page } = await connectedPayer("/demo");
+      await visible(page, "tool-select");
+      await page.getByTestId("pay-review").click();
+      await visible(page, "pay-dialog");
+      // Two presses in the same moment, as a double-click makes: the second lands on a button that has already been disabled.
+      await page.evaluate(() => {
+        const button = document.querySelector('[data-testid="pay-confirm"]') as HTMLButtonElement;
+        button.click();
+        button.click();
+      });
+      await payDone(page);
+      assert.equal(mock.count("eth_signTypedData_v4"), 1);
+      await page.getByTestId("pay-close").click();
+      await seeSettled(page);
+      assert.equal((await stack.router.earnings(stack.builder.address)) - before, USDC("0.0099"));
+      assert.equal(await page.getByTestId("paid-result").count(), 1);
+      await context.close();
+    });
+
+    await check("live: a reload in the middle of a payment picks it up again from the saved record and the chain, and it settles once", async () => {
+      const before = await stack.router.earnings(stack.builder.address);
+      const { mock, context, page } = await connectedPayer("/demo");
+      await visible(page, "tool-select");
+      await payOnce(page);
+      await page.reload({ waitUntil: "networkidle" });
+      await page.getByTestId("connect").click();
+      await visible(page, "paid-result");
+      assert.match(await text(page, "paid-result"), /picked up again after a reload/);
+      assert.equal(mock.count("eth_signTypedData_v4"), 1, "the reload signed nothing");
+      await seeSettled(page);
+      assert.equal((await stack.router.earnings(stack.builder.address)) - before, USDC("0.0099"));
+      // Once it shows as settled it is no longer in flight, so another reload does not bring it back.
+      await page.reload({ waitUntil: "networkidle" });
+      await page.getByTestId("connect").click();
+      await visible(page, "live-balances-view");
+      await page.waitForTimeout(1500);
+      assert.equal(await page.getByTestId("paid-result").count(), 0, "a settled payment came back after another reload");
+      await context.close();
+    });
+
+    await check("live: a payer who has not deposited is told the balance and to deposit, and nothing is signed", async () => {
+      const { mock, context, page } = await connectedPayer("/demo", {}, 0n);
+      await visible(page, "tool-select");
+      await page.getByTestId("pay-review").click();
+      const message = await text(page, "pay-error");
+      assert.match(message, /prepaid balance in the router is 0\.000000 QUSDC/);
+      assert.match(message, /Deposit first|deposit step/i);
+      assert.equal(await page.getByTestId("pay-dialog").isVisible(), false);
+      assert.equal(mock.count("eth_signTypedData_v4"), 0);
+      await context.close();
+    });
+
+    await check("live: a signature rejected in the wallet says so, charges nothing, and offers a way to review again", async () => {
+      const { mock, context, page } = await connectedPayer("/demo", { rejectSign: true });
+      await visible(page, "tool-select");
+      await page.getByTestId("pay-review").click();
+      await page.getByTestId("pay-confirm").click();
+      await visible(page, "pay-failed");
+      assert.match(await text(page, "pay-failed-headline"), /You rejected the request in your wallet/);
+      assert.match(await text(page, "pay-failed-funds"), /nothing|no funds|not been|was not/i);
+      assert.equal(await stack.router.payerBalance(mock.address), USDC("0.1"));
+      assert.equal(await page.getByTestId("paid-result").count(), 0);
+      await context.close();
+    });
+
+    await check("live: a wallet on the wrong network is told so, nothing can be reviewed, and switching makes the page work", async () => {
+      const { context, page } = await connectedPayer("/demo", { chainId: 1, knownChains: [1] }, 0n);
+      await visible(page, "wrong-network");
+      assert.match(await text(page, "wrong-network"), /Wrong network/);
+      assert.equal(await page.getByTestId("pay-review").isDisabled(), true);
+      await page.getByTestId("switch-network").click();
+      await page.getByTestId("wrong-network").waitFor({ state: "detached", timeout: 10_000 });
+      await visible(page, "live-balances-view");
+      await context.close();
+    });
+
+    await check("live: a wallet that a phone's wallet-app browser puts on the page after it has loaded is found, with no reload", async () => {
+      const { context } = await walletContext(browser, stack, {}, USDC("5"), parseEther("1"), { viewport: { width: 390, height: 844 }, lateMs: 5000 });
+      const page = await open(context, `${L}/demo`);
+      await page.getByTestId("connect").click();
+      assert.match(await text(page, "wallet-error"), /No wallet is ready yet/, "pressing Connect before the wallet is there says to wait, and does not do nothing");
+      await visible(page, "no-wallet", 8000); // the page gave up looking after about three seconds
+      await page.getByTestId("no-wallet").waitFor({ state: "detached", timeout: 10_000 }); // and took the wallet when it arrived and announced itself
+      await page.getByTestId("connect").click();
+      await visible(page, "live-balances-view");
+      await context.close();
+    });
+
+    await check("live: with no wallet at all the page says so after a few seconds, and tells a phone's visitor where to open it", async () => {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true });
+      const page = await open(context, `${L}/demo`);
+      await visible(page, "no-wallet", 10_000);
+      assert.match(await text(page, "no-wallet"), /On a phone, open this page from the browser inside the wallet app/);
+      await context.close();
+    });
+
+    await check("live: a tool server that does not answer is named in words, with a retry, and nothing is asked of the wallet", async () => {
+      const { mock, context } = await walletContext(browser, stack, {}, USDC("5"), parseEther("1"));
+      await depositFor(stack, mock.wallet, USDC("0.1"));
+      await context.route(`${toolsUrl}/**`, (route) => route.abort());
+      const page = await context.newPage();
+      await page.goto(`${L}/demo`, { waitUntil: "networkidle" });
+      await page.getByTestId("connect").click();
+      await visible(page, "tools-error");
+      assert.match(await text(page, "tools-error"), /Nothing was paid/);
+      assert.equal(await page.getByTestId("tools-retry").isVisible(), true);
+      assert.equal(await page.getByTestId("pay-review").count(), 0);
+      assert.equal(mock.count("eth_signTypedData_v4"), 0);
+      await context.unroute(`${toolsUrl}/**`);
+      await page.getByTestId("tools-retry").click();
+      await visible(page, "tool-select");
+      await context.close();
+    });
+
+    await check("live: when the page cannot reach the facilitator, a paid call still completes and the settlement line says it is not known instead of failing", async () => {
+      const { context, page, problems } = await connectedPayer("/demo");
+      await visible(page, "tool-select");
+      await context.route(`${stack.facilitatorUrl}/**`, (route) => route.abort());
+      await payOnce(page);
+      await visible(page, "settlement-status");
+      const line = await text(page, "settlement-status");
+      assert.doesNotMatch(line, /settled on chain/i);
+      assert.equal(problems.filter((p) => p.startsWith("page error")).length, 0, "no uncaught error");
+      await context.close();
+    });
+
+    await check("wallet: the history lists what happened on chain with explorer links, can be downloaded as a CSV, and an empty wallet gets an empty state", async () => {
+      const fresh = await walletContext(browser, stack, {}, 0n, parseEther("1"));
+      const empty = await open(fresh.context, `${L}/wallet`);
+      await empty.getByTestId("connect").click();
+      await visible(empty, "history-empty");
+      await fresh.context.close();
+
+      const { mock, context, page } = await connectedPayer("/wallet");
+      await page.goto(`${L}/demo`, { waitUntil: "networkidle" });
+      await page.getByTestId("connect").click();
+      await visible(page, "tool-select");
+      await payOnce(page);
+      await seeSettled(page);
+      await page.goto(`${L}/wallet`, { waitUntil: "networkidle" });
+      await page.getByTestId("connect").click();
+      await visible(page, "history-table");
+      const kinds = await page.locator('[data-testid="history-row"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-kind")));
+      assert.ok(kinds.length >= 2, `history rows: ${kinds.join(",")}`);
+      assert.ok(kinds.some((k) => /deposit/i.test(String(k))), `a deposit row: ${kinds.join(",")}`);
+      const [download] = await Promise.all([page.waitForEvent("download"), page.getByTestId("history-csv").click()]);
+      assert.match(download.suggestedFilename(), /^sluice-history-0x[0-9a-f]{4}[0-9a-f]{4}-\d{4}-\d{2}-\d{2}\.csv$/i);
+      const csv = await readFile((await download.path()) as string, "utf8");
+      assert.ok(csv.split(/\r?\n/).filter(Boolean).length >= kinds.length + 1, "a header and a line for each row");
+      assert.ok(!csv.includes(mock.wallet.privateKey), "no key in the file");
+      await context.close();
+    });
+
+    await check("builder: the tool server's tools and prices are listed with the payee, and a real paid test call works from the page", async () => {
+      const before = await stack.router.earnings(stack.builder.address);
+      const { context, page } = await connectedPayer("/builder");
+      await visible(page, "tools-table");
+      assert.equal(await page.locator('[data-testid="tools-table"] tbody tr').count(), 3);
+      assert.match(await text(page, "tools-table"), /token_risk_check/);
+      assert.match(await text(page, "tools-table"), /0\.01/);
+      assert.match(await text(page, "tools-payee"), new RegExp(`Paid to ${stack.builder.address.slice(0, 6)}…${stack.builder.address.slice(-4)}`, "i"));
+      assert.match(await text(page, "tools-payee"), /not the address you are looking at/, "a payer testing the tool is told these tools do not earn for them");
+      await visible(page, "tool-select");
+      await payOnce(page);
+      await seeSettled(page);
+      assert.equal((await stack.router.earnings(stack.builder.address)) - before, USDC("0.0099"));
+      await context.close();
+    });
+
+    await check("the status page reads the facilitator and the tool server, shows an overall state, and its JSON route has no secret and limits a caller", async () => {
+      const problems: Problems = [];
+      const page = await open(await browser.newContext(), `${L}/status`, problems);
+      await visible(page, "status-view");
+      await visible(page, "status-overall-tag");
+      assert.doesNotMatch(await text(page, "facilitator-status"), /not answering/);
+      assert.doesNotMatch(await text(page, "tools-status"), /not answering/);
+      assert.deepEqual(problems, []);
+      const res = await fetch(`${L}/api/status`);
+      assert.equal(res.status, 200);
+      const raw = await res.text();
+      const keys: string[] = [];
+      const walk = (v: unknown): void => {
+        if (Array.isArray(v)) v.forEach(walk);
+        else if (v && typeof v === "object") for (const [k, x] of Object.entries(v)) (keys.push(k), walk(x));
+      };
+      walk(JSON.parse(raw));
+      assert.deepEqual(keys.filter((k) => /secret|private|password|mnemonic|apikey|bearer|authorization/i.test(k)), []);
+      assert.doesNotMatch(raw, /0x[0-9a-fA-F]{64}(?![0-9a-fA-F])/, "no 32-byte value that could be a key");
+      assert.equal((await fetch(`${L}/api/status`, { method: "POST" })).status, 405);
+      let limited = false;
+      for (let i = 0; i < 40 && !limited; i++) limited = (await fetch(`${L}/api/status`)).status === 429;
+      assert.ok(limited, "a caller that asks over and over is told to slow down");
+      await page.close();
+    });
+
+    await check("the terms, the privacy page and the security page render from the repository, without the repo's draft line, and say who must still review them", async () => {
+      for (const [path, heading] of [["/terms", /Terms/i], ["/privacy", /Privacy/i], ["/security", /What limits what can go wrong/]] as const) {
+        const page = await open(await browser.newContext(), `${L}${path}`);
+        assert.match(await page.locator("h1").first().innerText(), heading);
+        const body = await page.locator("body").innerText();
+        assert.doesNotMatch(body, /not legal advice/i, `${path} carries the repository's draft line`);
+        assert.doesNotMatch(body, /\b(audited|battle-tested|production-ready|guaranteed?|risk-free)\b/i, `${path} makes a claim the project cannot support`);
+        await page.close();
+      }
+      const security = await open(await browser.newContext(), `${L}/security`);
+      const body = await security.locator("body").innerText();
+      assert.match(body, /No outside security review/);
+      assert.match(body, /QUSDC/);
+      await security.close();
+    });
+
+    await check("live: at phone width the whole flow fits the screen, and the review fits inside it", async () => {
+      const { context, page, problems } = await connectedPayer("/demo", {}, USDC("0.1"), { viewport: { width: 390, height: 844 } });
+      await visible(page, "tool-select");
+      const sideways = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+      assert.equal(await sideways(), 0, `the live tab scrolls sideways: ${await wideElements(page)}`);
+      await page.getByTestId("pay-review").click();
+      await visible(page, "pay-dialog");
+      const box = await page.getByTestId("pay-dialog").boundingBox();
+      assert.ok(box && box.x >= 0 && box.x + box.width <= 390.5, `the review is wider than the screen: ${JSON.stringify(box)}`);
+      assert.equal(await sideways(), 0, `the review scrolls sideways: ${await wideElements(page)}`);
+      assert.ok(await page.getByTestId("pay-confirm").isVisible());
+      await page.getByTestId("pay-cancel").click();
+      assert.deepEqual(problems, []);
+      await context.close();
+    });
+
     const failed = results.filter((r) => !r.ok);
-    process.stderr.write(`\nweb e2e: ${results.length - failed.length} passed, ${failed.length} failed\n`);
+    process.stderr.write(`\nweb e2e:${results.length - failed.length} passed, ${failed.length} failed\n`);
     process.exitCode = failed.length === 0 ? 0 : 1;
   } finally {
     await browser.close().catch(() => undefined);
     stop(empty);
     stop(live);
+    await tools.close().catch(() => undefined);
     await stack.stop().catch(() => undefined);
   }
 }

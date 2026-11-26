@@ -1,7 +1,9 @@
 // pnpm mutation:live
 //
 // The same check as `pnpm mutation:check`, for the go-live tooling: the facilitator's durable queue and its recovery after a crash, its kill
-// switch and caps and limits, the evidence recorder's verification and its labelling of networks, and the settings that refuse to start. It
+// switch and caps and limits, the evidence recorder's verification and its labelling of networks, the settings that refuse to start, and
+// the mainnet path's guards (the roles kept apart, the token and the node's chain checked, mistyped options refused), the funding
+// calculator, QUSDC's facts, the settings files and the fork evidence. It
 // changes one condition at a time, runs the tests meant to catch that change, and reports whether they failed. It edits files in place and
 // puts each one back (see src/mutation.ts), so run it on a copy. It sends nothing anywhere.
 //
@@ -16,6 +18,8 @@ const DUR = "test/unit/facilitator/durability.test.ts";
 const CRASH = "test/unit/facilitator/crash.test.ts";
 const REC = "test/unit/recorder.test.ts";
 const LIVE = "test/unit/live-tools.test.ts";
+const GUARDS = "test/unit/mainnet-guards.test.ts";
+const TOOLS = "test/unit/mainnet-tools.test.ts";
 
 const F = "packages/facilitator/src";
 const m = (id: string, file: string, find: string, replace: string, why: string, tests: string[]): Mutation => ({ id, file, find, replace, why, tests });
@@ -60,6 +64,53 @@ export const LIVE_MUTATIONS: Mutation[] = [
   m("R08", "src/evidence.ts", "if (legacyTables.length > 0) {", "if (false) {", "accept an evidence table with no Network column", [REC]),
   m("R09", "scripts/evidence/record.ts", "if (file === evidencePath) throw new UsageError(", "if (false) throw new UsageError(", "write a fork run into docs/EVIDENCE.md", [REC]),
   m("R10", "src/readrpc.ts", "if (!allowed.has(method)) throw new Error(", "if (false) throw new Error(", "let the recorder or the pre-flight check send a method that is not read-only", [REC, LIVE]),
+
+  // The mainnet deploy's guards: parameters, roles, the token, the node's chain, and the options that are refused
+  m("P01", "src/live.ts", "if (owner === ZERO_ADDRESS) throw new GuardError(", "if (false) throw new GuardError(", "make the zero address the router's owner", [GUARDS]),
+  m("P02", "src/live.ts", "if (feeRecipient === ZERO_ADDRESS) throw new GuardError(", "if (false) throw new GuardError(", "credit the fees to the zero address", [GUARDS]),
+  m("P03", "src/live.ts", "Number(rawFee) > MAX_FEE_BPS)) {", "Number(rawFee) > 2000)) {", "accept a fee of 201 to 999 basis points", [GUARDS]),
+  m("P04", "src/live.ts", "feeBps: rawFee ? Number(rawFee) : DEFAULT_FEE_BPS", "feeBps: rawFee ? Number(rawFee) : 0", "default the fee to nothing instead of 1%", [GUARDS]),
+  m("P05", "src/live.ts", 'if (network === "mainnet" && !who.relayer) {', "if (false) {", "deploy on mainnet without the relayer's address, so the roles cannot be checked", [GUARDS]),
+  m("P06", "src/live.ts", "if (owner === deployer) throw new GuardError(", "if (false) throw new GuardError(", "make the deployer key the owner", [GUARDS]),
+  m("P07", "src/live.ts", "if (feeRecipient === deployer) throw new GuardError(", "if (false) throw new GuardError(", "make the deployer key the fee recipient", [GUARDS]),
+  m("P08", "src/live.ts", "if (relayer && owner === relayer) throw new GuardError(", "if (false) throw new GuardError(", "make the relayer the owner", [GUARDS]),
+  m("P09", "src/live.ts", "if (relayer && feeRecipient === relayer) throw new GuardError(", "if (false) throw new GuardError(", "make the relayer the fee recipient", [GUARDS]),
+  m("P10", "src/live.ts", "if (relayer && relayer === deployer) throw new GuardError(", "if (false) throw new GuardError(", "use one key as the deployer and the relayer", [GUARDS]),
+  m("P11", "src/live.ts", 'if ((await provider.getCode(where)) === "0x") throw new GuardError(', "if (false) throw new GuardError(", "deploy with a token address that holds no contract", [GUARDS]),
+  m("P12", "src/live.ts", "if (Number(decimals) !== 6) throw new GuardError(", "if (false) throw new GuardError(", "deploy with a token that does not have six decimals", [GUARDS]),
+  m("P13", "src/live.ts", "await checkDeployToken(ctx.provider, p.token);", "", "skip the token check inside the deploy function", [GUARDS]),
+  m("P14", "src/live.ts", 'if (network === "mainnet" && token !== getAddress(QUSDC_ADDRESS)) {', "if (false) {", "deploy a mainnet router for another token", [GUARDS]),
+  m("P15", "scripts/live/deploy.ts", "throw new GuardError(`refusing to run deploy: unknown option", "continue; void new GuardError(`refusing to run deploy: unknown option", "turn a mistyped --dry-run into a real deployment", [GUARDS]),
+  m("P16", "scripts/live/deploy.ts", "await requireNodeChain(provider, approval.chainId, approval.network);", "", "deploy to a node on another chain", [GUARDS]),
+  m("P17", "scripts/live/smoke.ts", 'for (const flag of argv) if (flag !== "--dry-run") throw new GuardError(', 'for (const flag of argv) if (false) throw new GuardError(', "turn a mistyped --dry-run into a real smoke run", [GUARDS]),
+  m("P18", "scripts/live/deploy.ts", "checkDeployRoles(params, { deployer: deployerAddress, ...(relayer ? { relayer } : {}) }, approval.network);", "", "skip the check that keeps the roles apart", [GUARDS]),
+  m("P19", "packages/sdk/src/rpc.ts", "if (reported !== BigInt(chainId)) throw new Error(", "if (false) throw new Error(", "accept a node on another chain", [GUARDS]),
+  m("P20", "packages/facilitator/src/runtime.ts", "await requireNodeChain(made, env.chainId, env.network);", "", "start the facilitator against a node on another chain", [TOOLS]),
+  m("P21", "examples/paid-tools/src/host.ts", "await requireNodeChain(provider, env.chainId, env.network);", "", "start the tool server against a node on another chain", [TOOLS]),
+  m("P22", "src/exit.ts", "process.exitCode = code;", "", "end a command with exit code 0 whatever it found", [GUARDS]),
+
+  // The funding calculator, QUSDC's facts, the wiring, and the fork evidence
+  m("P23", "src/funding.ts", "return (reserveIn * out * 1000n) / ((reserveOut - out) * 997n) + 1n;", "return (reserveIn * out * 1000n) / ((reserveOut - out) * 997n);", "price QUSDC from the pool one unit too low", [TOOLS]),
+  m("P24", "src/funding.ts", "out >= reserveOut) return undefined;", "out > reserveOut) return undefined;", "say the pool can supply all of its QUSDC", [TOOLS]),
+  m("P25", "src/funding.ts", "deployerQieWei: costWei(deployerGas, p.gasPrice, (p.margin - 1n) * 100n),", "deployerQieWei: costWei(deployerGas, p.gasPrice),", "leave the margin off the deployer's QIE", [TOOLS]),
+  m("P26", "src/funding.ts", "relayerHoldWei: max(relayerRunQieWei, max(relayerFloorWei, p.dailyBudgetWei)),", "relayerHoldWei: relayerRunQieWei,", "tell the relayer to hold only what the run needs, below the low-balance line", [TOOLS]),
+  m("P27", "src/funding.ts", "const relayerTopUpWei = costWei(ONBOARD_APPROVE_GAS + ONBOARD_DEPOSIT_GAS, p.gasPrice, 10n);", "const relayerTopUpWei = costWei(ONBOARD_APPROVE_GAS + ONBOARD_DEPOSIT_GAS, p.gasPrice);", "leave out the tenth above the price that the owner's transactions are signed at", [TOOLS]),
+  m("P28", "src/funding.ts", "const up = ((wei + unit - 1n) / unit) * unit;", "const up = (wei / unit) * unit;", "print a need rounded down", [TOOLS]),
+  m("P29", "scripts/live/funding.ts", "if (runQusdc > CEILING_QUSDC) throw new UsageError(", "if (false) throw new UsageError(", "plan a funded run above the live scripts' ceiling", [TOOLS]),
+  m("P30", "scripts/live/funding.ts", "if (deployer && relayer && deployer === relayer) throw new UsageError(", "if (false) throw new UsageError(", "plan with one address as the deployer and the relayer", [TOOLS]),
+  m("P31", "scripts/live/funding.ts", "if (reads.chainId !== 1990) {", "if (false) {", "price a funding plan from a chain that is not mainnet", [TOOLS]),
+  m("P32", "src/qusdc-facts.ts", 'if (f.strangerCanBurn === "yes") d.push(', "if (false) d.push(", "read a burn that anyone can make as a role check", [TOOLS]),
+  m("P33", "src/qusdc-facts.ts", "if (f.upgradeable) d.push(", "if (false) d.push(", "miss that QUSDC has become upgradeable", [TOOLS]),
+  m("P34", "src/qusdc-facts.ts", "const upgradeable = slots.some((s) => !/^0x0*$/.test(s));", "const upgradeable = false;", "never look at the upgrade slots", [TOOLS]),
+  m("P35", "src/qusdc-facts.ts", "if (!f.vaultRoleHolderHasVaultRole) d.push(", "if (false) d.push(", "miss that the vault role has moved to another holder", [TOOLS]),
+  m("P36", "src/wire.ts", "if (raw.network !== network) throw new WireError(", "if (false) throw new WireError(", "wire a testnet deployment into mainnet settings", [TOOLS]),
+  m("P37", "src/wire.ts", 'if (network === "mainnet" && token !== getAddress(QUSDC_ADDRESS)) throw new WireError(', "if (false) throw new WireError(", "wire a mainnet router that holds another token", [TOOLS]),
+  m("P38", "src/wire.ts", "if (HEX64.test(e.value)) throw new WireError(", "if (false) throw new WireError(", "write a key-shaped value into a settings file", [TOOLS]),
+  m("P39", "scripts/live/wire.ts", "if (taken.length > 0 && !force) throw new UsageError(", "if (false) throw new UsageError(", "overwrite settings files a person has filled in", [TOOLS]),
+  m("P40", "src/recorder.ts", 'if (labelled !== "fork") throw new RecordError(', "if (false) throw new RecordError(", "read another network's row in the Fork table", [TOOLS]),
+  m("P41", "scripts/evidence-check.ts", "if (fork && !fileArg) {", "if (false) {", "check fork rows against docs/EVIDENCE.md", [GUARDS]),
+  m("P42", "scripts/evidence-check.ts", "if (fork && fileArg && resolve(fileArg) === resolve(realPath)) {", "if (false) {", "read fork rows from docs/EVIDENCE.md itself", [GUARDS]),
+  m("P43", "scripts/evidence-summary.ts", "if (fork && fileIndex < 0) {", "if (false) {", "count a fork run without a copy of the evidence file", [GUARDS]),
 ];
 
 function main(): number {

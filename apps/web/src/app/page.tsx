@@ -3,8 +3,10 @@ import type { Metadata } from "next";
 import { ChannelArt, MechanismDiagram } from "../components/art";
 import { ProofStrip } from "../components/proof-strip";
 import { StatusGrid } from "../components/status-badge";
-import { HOW_STEPS, IDEA_SENTENCES, PROBLEMS, QUSDC_FINDING, SAFETY } from "../content/copy";
+import { HOW_STEPS, IDEA_SENTENCES, PROBLEMS, QUSDC_FINDING, SAFETY, liveLimits } from "../content/copy";
+import { loadConfigFromProcess } from "../lib/config";
 import { content, fork } from "../lib/content";
+import { ownRowsPhrase } from "../lib/own-rows";
 import { renderInline } from "../lib/markdown";
 
 export const metadata: Metadata = { alternates: { canonical: "/" } };
@@ -13,7 +15,7 @@ const mdOptions = { source: "README.md" } as const;
 
 export default function Landing() {
   const rows = content.evidence.rows;
-  const { mainnet, testnet } = content.evidence;
+  const { mainnet, testnet, own } = content.evidence;
   return (
     <div className="landing">
       <section className="hero">
@@ -24,7 +26,7 @@ export default function Landing() {
           </h1>
           <div className="hero-cta">
             <Link className="btn btn-dark" href="/demo">
-              Try the simulated demo
+              Try the demo
             </Link>
             <Link className="btn btn-soft" href="/builder">
               Wrap a tool
@@ -34,13 +36,13 @@ export default function Landing() {
             </Link>
           </div>
           <p className="hero-status" data-testid="hero-status">
-            Verified mainnet transactions in the evidence file: {mainnet}. Testnet: {testnet}.{" "}
+            Verified mainnet rows in the evidence file: {mainnet}{ownRowsPhrase(mainnet, own.mainnet)}. Testnet: {testnet}{ownRowsPhrase(testnet, own.testnet)}.{" "}
             {mainnet === 0 ? "Nothing is deployed to a QIE network yet. What is built has been tested on a local copy of QIE mainnet." : ""}
           </p>
         </div>
         <ChannelArt />
         <div className="wrap hero-proof">
-          <ProofStrip rows={rows} sample={fork} />
+          <ProofStrip rows={rows} sample={fork} own={content.ownAddresses} />
         </div>
       </section>
 
@@ -167,7 +169,15 @@ export default function Landing() {
               ))}
             </ul>
             <p>
-              <Link href="/docs/risks">Read all the risks</Link> · <Link href="/demo#risk">Run the risk check on any token</Link>
+              <strong>Limits in force on this site.</strong>
+            </p>
+            <ul className="callout-list" data-testid="risks-limits">
+              {liveLimits(loadConfigFromProcess().sessionCapUnits).map((l) => (
+                <li key={l}>{l}</li>
+              ))}
+            </ul>
+            <p>
+              <Link href="/docs/risks">Read all the risks</Link> · <Link href="/security">Security and limits</Link> · <Link href="/demo#risk">Run the risk check on any token</Link>
             </p>
           </div>
         </div>
@@ -179,7 +189,7 @@ export default function Landing() {
           <h2 id="status-title">Where each part stands</h2>
           <StatusGrid rows={rows} />
           <p className="muted status-note">
-            A badge says Live only when the evidence file holds a verified mainnet row for it. Verified rows: mainnet {mainnet}, testnet {testnet}. &quot;Tested on a fork&quot; means a test ran it against a local copy of QIE mainnet.
+            A badge says Live only when the evidence file holds a verified mainnet row for it. Verified rows: mainnet {mainnet}{ownRowsPhrase(mainnet, own.mainnet)}; testnet {testnet}{ownRowsPhrase(testnet, own.testnet)}. &quot;Tested on a fork&quot; means a test ran it against a local copy of QIE mainnet.
           </p>
         </div>
       </section>

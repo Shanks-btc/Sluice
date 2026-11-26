@@ -66,9 +66,10 @@ Everything comes from the environment. Names are also in [.env.example](../.env.
 | `SLUICE_FACILITATOR_STATE` | no | `/data/queue.jsonl` | The queue's journal. Required on mainnet and testnet: a queue kept only in memory is lost when the process stops. |
 | `SLUICE_FACILITATOR_URL` | no | `https://<your host>` | Where it is reached. Used to build the status link in replies. |
 | `SLUICE_FACILITATOR_HOST` | no | `0.0.0.0` in a container, `127.0.0.1` behind a proxy on the same machine | The address to listen on. |
-| `SLUICE_FACILITATOR_PORT` | no | `8402` | The port. |
+| `SLUICE_FACILITATOR_PORT` | no | `8402` | The port. The image listens on the platform's `PORT` instead when the platform sets one (Railway does). |
 | `SLUICE_FACILITATOR_TRUST_PROXY_HOPS` | no | `1` behind one proxy | How many proxies in front append to `X-Forwarded-For`. Leave it at 0 with no proxy: the header is then ignored, because anyone can send one. |
 | `SLUICE_FACILITATOR_CORS_ORIGINS` | no | your web app's origin | Exact origins allowed to read answers from a browser. Empty allows none. Never a wildcard. |
+| `SLUICE_FACILITATOR_METRICS_TOKEN` | no | a random value of 24 or more characters | Secret. Turns on `GET /internal/metrics`, which needs `Authorization: Bearer <this value>`. With none set, that path does not exist. See [OPERATIONS.md](OPERATIONS.md). |
 | `SLUICE_FACILITATOR_KILL_FILE` | no | `/data/KILL` | While this file exists, the kill switch is on. |
 | `SLUICE_FACILITATOR_KILL_SWITCH` | no | empty | `1` turns the kill switch on from the start. It takes a restart to change. |
 | `SLUICE_FACILITATOR_MAX_BODY_BYTES` | no | `65536` | The largest request body. At most 1048576. |
@@ -77,6 +78,9 @@ Everything comes from the environment. Names are also in [.env.example](../.env.
 | `SLUICE_FACILITATOR_MAX_TOPUP_QIE` | no | `0.001` | The most QIE one top-up may send. Ceiling 0.0015. |
 | `SLUICE_FACILITATOR_MAX_TOPUP_PER_ADDRESS_QIE` | no | `0.001` | The most QIE all top-ups to one address may send in a UTC day. Ceiling 0.003. |
 | `SLUICE_FACILITATOR_LOW_BALANCE_QIE` | no | `0.5` | The relayer's balance below which `/health` sets `lowBalance`. |
+| `SLUICE_FACILITATOR_MAX_ONBOARD_QUSDC` | no | `10` | The most QUSDC one zero-QIE start may deposit. It can only be lowered. |
+| `SLUICE_FACILITATOR_PAYER_DAILY_QUSDC` | no | `50` | The most QUSDC one payer may queue in a UTC day. It can only be lowered. |
+| `SLUICE_FACILITATOR_DAILY_QUSDC` | no | `500` | The most QUSDC all payers may queue in a UTC day. It can only be lowered. |
 | `SLUICE_FACILITATOR_FLUSH_MS` | no | `15000` | How often queued payments are batched. |
 | `SLUICE_FACILITATOR_SHUTDOWN_MS` | no | `30000` | How long a shutdown waits for a batch in progress. |
 | `SLUICE_FACILITATOR_RPC_TIMEOUT_MS` | no | `20000` | How long one request to the node may take before the service gives up on it. |
@@ -86,7 +90,7 @@ A setting it cannot read stops the start. That is on purpose: a mistyped limit o
 
 ## The caps in code
 
-These are constants in the program. A setting can lower a cap and can never raise it past its ceiling; a value above a ceiling stops the start.
+These are constants in the program. A setting can never raise a cap past its ceiling; a value above a ceiling stops the start. The three QUSDC amounts that have a setting can only be lowered: a value above the default stops the start.
 
 | Cap | Default | Ceiling |
 | --- | --- | --- |
@@ -151,13 +155,14 @@ These are Linux commands for a small server you control. Replace the angle-brack
 
 ## Option B: Railway
 
-These describe what to set. Railway's screens change, so follow its current documentation for where each setting lives.
+[HOSTING-RAILWAY.md](HOSTING-RAILWAY.md) has the click-by-click steps, the exact list of variables, the kill switch drill and how to roll back. In short:
 
-1. Create a service from this repository using the Dockerfile at `packages/facilitator/Dockerfile`, with the repository root as the build context.
-2. Add the settings above as the service's variables. Mark `SLUICE_RELAYER_KEY` as a secret. Set `SLUICE_FACILITATOR_PORT` to the port the service is told to expose, and `SLUICE_FACILITATOR_TRUST_PROXY_HOPS` to the number of proxies Railway puts in front (check its documentation; leave it at 0 if you are unsure, which makes every caller share one rate limit).
-3. Attach a volume mounted at `/data`. Without it the queue file is lost when the service is replaced.
-4. Set the health check path to `/health`.
+1. Create a service from this repository, with the repository root as the build context and `RAILWAY_DOCKERFILE_PATH` set to `/packages/facilitator/Dockerfile`.
+2. Add the settings above as the service's variables. Put `SLUICE_RELAYER_KEY` in as a sealed variable, from the host's secret store and never from a file in the repository. The image listens on the `PORT` Railway gives it, so leave `SLUICE_FACILITATOR_PORT` alone. Set `SLUICE_FACILITATOR_TRUST_PROXY_HOPS` to 1 (HOSTING-RAILWAY.md says why, and what is unverified).
+3. Attach a volume mounted at `/data`. Without it the queue file is lost when the service is replaced. Railway mounts a volume as root, so the image starts as root, gives `/data` to the `node` user, and runs the service as `node`.
+4. Set the health check path to `/health`. Railway checks it only while a deploy starts.
 5. Give the service a domain and use it as `SLUICE_FACILITATOR_URL`.
+6. Run `pnpm live:hostcheck` to check it from outside.
 
 ## The kill switch
 

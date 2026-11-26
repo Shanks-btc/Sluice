@@ -517,6 +517,23 @@ describe("Facilitator settings", () => {
     expect(() => readEnv({ ...base, SLUICE_FACILITATOR_MAX_TOPUP_QIE: "0.0014", SLUICE_FACILITATOR_MAX_TOPUP_PER_ADDRESS_QIE: "0.001" })).to.throw(/below a single top-up/);
   });
 
+  it("lowers the three QUSDC caps from its settings, and leaves each at its default when it is not set", () => {
+    const e = readEnv({ ...base, SLUICE_FACILITATOR_MAX_ONBOARD_QUSDC: "0.02", SLUICE_FACILITATOR_PAYER_DAILY_QUSDC: "0.030001", SLUICE_FACILITATOR_DAILY_QUSDC: " 0.05 " });
+    expect(e.caps).to.deep.include({ maxOnboardAmount: 20_000n, payerDailyAmount: 30_001n, globalDailyAmount: 50_000n });
+    expect(readEnv(base).caps).to.deep.include({ maxOnboardAmount: 10_000_000n, payerDailyAmount: 50_000_000n, globalDailyAmount: 500_000_000n });
+    // Exactly the default is allowed: it changes nothing.
+    expect(readEnv({ ...base, SLUICE_FACILITATOR_MAX_ONBOARD_QUSDC: "10" }).caps.maxOnboardAmount).to.equal(10_000_000n);
+  });
+
+  it("refuses a QUSDC cap that would raise the default, even below the ceiling in code, and one it cannot read", () => {
+    for (const [name, above] of [["SLUICE_FACILITATOR_MAX_ONBOARD_QUSDC", "10.000001"], ["SLUICE_FACILITATOR_PAYER_DAILY_QUSDC", "51"], ["SLUICE_FACILITATOR_DAILY_QUSDC", "501"]] as const) {
+      expect(() => readEnv({ ...base, [name]: above }), `${name}=${above}`).to.throw(new RegExp(`refusing to start: ${name} can only lower the cap`));
+      for (const bad of ["0", "0.000000", "-1", "1e3", "0x10", "1.0000001", "5 QUSDC", "NaN"]) {
+        expect(() => readEnv({ ...base, [name]: bad }), `${name}=${bad}`).to.throw(new RegExp(`refusing to start: ${name} must be a plain amount of QUSDC`));
+      }
+    }
+  });
+
   it("does not show the relayer key when the settings are printed or serialised", () => {
     const e = readEnv(base);
     expect(JSON.stringify(e, (_k, v) => (typeof v === "bigint" ? v.toString() : v))).to.not.contain("34".repeat(32));
@@ -682,6 +699,6 @@ describe("Time limits on the node", function () {
   it("is what the facilitator's program uses, with a setting for the limit", () => {
     expect(readEnv({ SLUICE_NETWORK: "local", SLUICE_RPC_URL: "http://127.0.0.1:8545", SLUICE_ROUTER: `0x${"12".repeat(20)}`, SLUICE_RELAYER_KEY: `0x${"34".repeat(32)}` }).rpcTimeoutMs).to.equal(20_000);
     expect(() => readEnv({ SLUICE_NETWORK: "local", SLUICE_RPC_URL: "http://127.0.0.1:8545", SLUICE_ROUTER: `0x${"12".repeat(20)}`, SLUICE_RELAYER_KEY: `0x${"34".repeat(32)}`, SLUICE_FACILITATOR_RPC_TIMEOUT_MS: "5" })).to.throw(/SLUICE_FACILITATOR_RPC_TIMEOUT_MS/);
-    expect(readFileSync(join(__dirname, "..", "..", "..", "packages", "facilitator", "src", "runtime.ts"), "utf8")).to.contain("new TimedJsonRpcProvider(");
+    expect(readFileSync(join(__dirname, "..", "..", "..", "packages", "facilitator", "src", "runtime.ts"), "utf8")).to.contain("new FailoverJsonRpcProvider("); // a TimedJsonRpcProvider that also reads from the next endpoint
   });
 });

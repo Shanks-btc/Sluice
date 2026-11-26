@@ -1,0 +1,17 @@
+{
+  "1990": {
+    "sourcifyName": "QIE Mainnet",
+    "fetchContractCreationTxUsing": {
+      "blockscoutApi": {
+        "url": "https://mainnet.qie.digital/"
+      }
+    },
+    "rpc": [
+      { "type": "BaseRPC", "url": "https://rpc1mainnet.qie.digital", "traceSupport": "debug_traceTransaction" },
+      { "type": "BaseRPC", "url": "https://rpc2mainnet.qie.digital", "traceSupport": "debug_traceTransaction" },
+      { "type": "BaseRPC", "url": "https://rpc3mainnet.qie.digital", "traceSupport": "debug_traceTransaction" },
+      { "type": "BaseRPC", "url": "https://rpc4mainnet.qie.digital", "traceSupport": "debug_traceTransaction" },
+      { "type": "BaseRPC", "url": "https://rpc5mainnet.qie.digital", "traceSupport": "debug_traceTransaction" }
+    ]
+  }
+}

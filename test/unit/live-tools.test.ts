@@ -19,6 +19,7 @@ import { decodeCall, dryRunDeploy, dryRunSmoke, formatDryRun } from "../../src/d
 import { EXPECTED, VerifyError, buildInput, constructorArguments, flatten, submitVerification, vaultConstructorArguments } from "../../src/verify-contracts";
 import { TESTNET_CHAIN_ID, TEST_TOKEN_MINT, deployTestToken, testTokenPlan } from "../../src/test-token";
 import { readOnlyRpc } from "../../src/readrpc";
+import { copyable, safeReaddir } from "../../src/secret-paths";
 import { main as preflightMain } from "../../scripts/live/preflight";
 import { main as verifyMain } from "../../scripts/live/verify-contracts";
 import { main as deployMain } from "../../scripts/live/deploy";
@@ -55,6 +56,22 @@ describe("Gas figures: the numbers the funding plan, the pre-flight check and th
     const batch = doc.split("\n").find((l) => l.startsWith("| 50 |") && l.includes("3,291,319"));
     expect(batch, "the largest batch measured").to.not.equal(undefined);
     expect(MEASURED_GAS.batch50Worst).to.equal(3_291_319n);
+  });
+
+  it("include the batch, signature and top-up figures the funding calculator budgets from, row for row", () => {
+    expect(MEASURED_GAS.authorizeBySig).to.equal(gas("Authorize an agent by signature, one tool"));
+    expect(MEASURED_GAS.withdrawBySig).to.equal(gas("Withdraw by signature, through a relayer"));
+    expect(MEASURED_GAS.refundBySig).to.equal(gas("Refund by signature, through a relayer"));
+    // Scenario B (every intent from a different payer to a different builder), batch sizes 1 and 10.
+    const scenarioB = doc.split("## Batch settle, scenario B")[1]?.split("\n## ")[0] ?? "";
+    const batch = (size: number): bigint => {
+      const row = scenarioB.split("\n").find((l) => l.startsWith(`| ${size} |`));
+      if (!row) throw new Error(`no scenario B row for ${size}`);
+      return BigInt((row.split("|")[2] as string).trim().replace(/,/g, ""));
+    };
+    expect(MEASURED_GAS.batch1Worst).to.equal(batch(1));
+    expect(MEASURED_GAS.batch10Worst).to.equal(batch(10));
+    expect(MEASURED_GAS.batch50Worst).to.equal(batch(50));
   });
 
   it("sum to the smoke run's eight transactions", () => {
@@ -219,11 +236,17 @@ describe("Pre-flight: the read-only check before a live run", function () {
     expect(proxy.seen.length).to.be.greaterThan(8);
     for (const method of proxy.seen) expect(PREFLIGHT_READ_ONLY_METHODS.has(method), method).to.equal(true);
     for (const method of ["eth_sendRawTransaction", "eth_sendTransaction", "eth_sign", "personal_sign"]) expect(PREFLIGHT_READ_ONLY_METHODS.has(method)).to.equal(false);
-    expect([...PREFLIGHT_READ_ONLY_METHODS].sort()).to.deep.equal(["eth_blockNumber", "eth_call", "eth_chainId", "eth_gasPrice", "eth_getBalance", "eth_getCode"]);
+    expect([...PREFLIGHT_READ_ONLY_METHODS].sort()).to.deep.equal(["eth_blockNumber", "eth_call", "eth_chainId", "eth_gasPrice", "eth_getBalance", "eth_getCode", "eth_getStorageAt"]);
   });
 
   describe("the command", () => {
-    const run = async (args: string[], env: Record<string, string | undefined>, cwd?: string) => {
+    // The command reads deployment.json in the folder it is run from, so a case with no record of its own is run in an empty folder.
+    let empty: string;
+    before(() => {
+      empty = mkdtempSync(join(tmpdir(), "sluice-pre-empty-"));
+    });
+    after(() => rmSync(empty, { recursive: true, force: true }));
+    const run = async (args: string[], env: Record<string, string | undefined>, cwd: string = empty) => {
       const lines: string[] = [];
       const code = await preflightMain(args, env, { log: (l) => lines.push(l), cwd });
       return { code, text: lines.join("\n") };
@@ -354,10 +377,10 @@ describe("Dry run: what a live script would send, without sending it", function 
   });
 
   it("is what `--dry-run` does in deploy.ts and smoke.ts: the plan is printed, the guard still applies, and nothing is sent", async () => {
-    const [owner, fee] = await ethers.getSigners();
+    const [owner, fee, relayer] = await ethers.getSigners();
     const env = {
       SLUICE_NETWORK: "mainnet", SLUICE_APPROVE: "deploy", SLUICE_KEY: signer.privateKey, SLUICE_RPC_URL: proxy.url, SLUICE_OWNER: owner!.address,
-      SLUICE_FEE_RECIPIENT: fee!.address, SLUICE_FEE_BPS: "100",
+      SLUICE_FEE_RECIPIENT: fee!.address, SLUICE_FEE_BPS: "100", SLUICE_RELAYER: relayer!.address,
     };
     const lines: string[] = [];
     await unchanged(async () => {
@@ -423,8 +446,7 @@ describe("Contract verification: the standard input, the flat file and the explo
   });
 
   function readdirBuildInfo(): string {
-    const { readdirSync } = require("node:fs") as typeof import("node:fs");
-    for (const f of readdirSync(join(ROOT, "artifacts", "build-info"))) {
+    for (const f of safeReaddir(join(ROOT, "artifacts", "build-info"))) {
       const j = JSON.parse(readFileSync(join(ROOT, "artifacts", "build-info", f), "utf8"));
       if (j.output.contracts["contracts/PaymentRouter.sol"]) return f;
     }
@@ -584,7 +606,7 @@ describe("Contract verification: the standard input, the flat file and the explo
       mkdirSync(join(root, "artifacts"), { recursive: true });
       // The command reads the build info from the repository's own artifacts: link them in by copying the folder it needs.
       const { cpSync } = require("node:fs") as typeof import("node:fs");
-      cpSync(join(ROOT, "artifacts", "build-info"), join(root, "artifacts", "build-info"), { recursive: true });
+      cpSync(join(ROOT, "artifacts", "build-info"), join(root, "artifacts", "build-info"), { recursive: true, filter: copyable });
       const deploymentTx = (s.router as unknown as { deploymentTransaction: () => { hash: string } }).deploymentTransaction();
       writeFileSync(join(root, "deployment.json"), JSON.stringify({ network: "mainnet", router: s.routerAddress, vault: s.vaultAddress, hash: deploymentTx.hash }));
       proxy = await startChaosProxy(s.rpcUrl);
@@ -600,6 +622,8 @@ describe("Contract verification: the standard input, the flat file and the explo
     const explorer = async (options: { alwaysBadGateway?: boolean; verifyOnPost?: boolean } = {}) => {
       const verified = new Set<string>();
       const posts: URLSearchParams[] = [];
+      /** Every address the explorer was asked about, by a read or by a submission. */
+      const asked: string[] = [];
       const server = createServer((req, res) => {
         const chunks: Buffer[] = [];
         req.on("data", (c: Buffer) => chunks.push(c));
@@ -610,17 +634,19 @@ describe("Contract verification: the standard input, the flat file and the explo
           if (req.method === "POST") {
             const form = new URLSearchParams(Buffer.concat(chunks).toString("utf8"));
             posts.push(form);
+            asked.push(String(form.get("contractaddress")));
             if (options.verifyOnPost !== false) verified.add(String(form.get("contractaddress")).toLowerCase());
             return send(200, { status: "1", message: "OK", result: "guid" });
           }
           if (url.pathname === "/api" && url.searchParams.get("action") === "checkverifystatus") return send(200, { result: "Pass - Verified" });
           const m = /^\/api\/v2\/smart-contracts\/(0x[0-9a-fA-F]{40})$/.exec(url.pathname);
+          if (m) asked.push(m[1] as string);
           if (m) return verified.has((m[1] as string).toLowerCase()) ? send(200, { is_verified: true, name: "X" }) : send(404, { message: "Not found" });
           return send(404, {});
         });
       });
       await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-      return { url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, posts, verified, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }) };
+      return { url: `http://127.0.0.1:${(server.address() as { port: number }).port}`, posts, verified, asked, close: () => new Promise<void>((r) => { server.closeAllConnections(); server.close(() => r()); }) };
     };
     const run = (args: string[], env: Record<string, string | undefined>, extra = {}) => verifyMain(args, env, { log: (l) => logs.push(l), root, ...extra });
     const baseEnv = () => ({ SLUICE_NETWORK: "mainnet", SLUICE_RPC_URL: proxy.url });
@@ -634,21 +660,29 @@ describe("Contract verification: the standard input, the flat file and the explo
       const text = logs.join("\n");
       expect(text).to.contain("compiler v0.8.24+commit.e11b9ed9, optimization on, 200 runs, EVM version shanghai, licence MIT");
       expect(text).to.contain("contract name contracts/PaymentRouter.sol:PaymentRouter");
+      // The vault's files are written for a reader to build it again, and the output says this command does not submit them.
+      expect(text).to.contain("(for building the vault again; this command does not submit them)");
+      expect(text).to.contain("is created by the router's constructor. This command submits nothing for it and does not ask the explorer about it");
+      expect(text).to.contain("pnpm live:vaultcheck");
       expect(readFileSync(join(root, "artifacts", "verification", "AgentVault.constructor-arguments.txt"), "utf8").trim()).to.equal(vaultConstructorArguments(s.routerAddress));
       expect(readFileSync(join(root, "artifacts", "verification", "PaymentRouter.constructor-arguments.txt"), "utf8").trim()).to.have.length(4 * 64);
       expect(proxy.seen.every((m) => ["eth_getTransactionByHash"].includes(m))).to.equal(true);
     });
 
-    it("submits both contracts, then confirms with a separate read that the explorer shows them verified", async () => {
+    it("submits the router only, then confirms with a separate read that the explorer shows it verified, and never submits or asks about the vault", async () => {
       const e = await explorer();
       try {
         const code = await run([ "--explorer", e.url ], { ...baseEnv(), SLUICE_APPROVE: "verify" }, { submit: { sleep: async () => undefined, pollMs: 1, retryMs: 1 } });
         expect(code, logs.join("\n")).to.equal(0);
-        expect(e.posts).to.have.length(2);
-        expect(e.posts.map((p) => p.get("contractname")).sort()).to.deep.equal(["contracts/AgentVault.sol:AgentVault", "contracts/PaymentRouter.sol:PaymentRouter"]);
+        expect(e.posts).to.have.length(1);
+        expect(e.posts.map((p) => p.get("contractname"))).to.deep.equal(["contracts/PaymentRouter.sol:PaymentRouter"]);
+        expect(e.posts.map((p) => String(p.get("contractaddress")).toLowerCase())).to.deep.equal([s.routerAddress.toLowerCase()]);
         const text = logs.join("\n");
         expect(text).to.contain("explorer: PaymentRouter now shows verified source");
-        expect(text).to.contain("explorer: AgentVault now shows verified source");
+        expect(text).to.not.match(/explorer: AgentVault/);
+        expect(text).to.contain("This command submits nothing for it");
+        // The explorer was never asked about the vault's address, so whatever it would answer for the vault changes nothing.
+        expect(e.asked.map((a) => a.toLowerCase())).to.not.include(s.vaultAddress.toLowerCase());
       } finally {
         await e.close();
       }
@@ -665,14 +699,17 @@ describe("Contract verification: the standard input, the flat file and the explo
       }
     });
 
-    it("with --check-only, only asks the explorer, and exits 0 only when both are verified", async () => {
+    it("with --check-only, only asks the explorer about the router, and exits 0 when the router is verified, whatever the explorer says of the vault", async () => {
       const e = await explorer();
       try {
         expect(await run(["--check-only", "--explorer", e.url], baseEnv())).to.equal(1);
         expect(e.posts).to.have.length(0);
-        e.verified.add(s.routerAddress.toLowerCase());
-        e.verified.add(s.vaultAddress.toLowerCase());
+        e.verified.add(s.routerAddress.toLowerCase()); // the vault is not verified on this stand-in explorer, and that is not a failure
+        logs.length = 0;
         expect(await run(["--check-only", "--explorer", e.url], baseEnv())).to.equal(0);
+        expect(logs.join("\n")).to.contain("explorer: PaymentRouter shows verified source");
+        expect(logs.join("\n")).to.not.match(/explorer: AgentVault/);
+        expect(e.asked.map((a) => a.toLowerCase())).to.not.include(s.vaultAddress.toLowerCase());
       } finally {
         await e.close();
       }
@@ -790,6 +827,10 @@ describe("The relayer key maker", () => {
       expect(text).to.contain(`address: ${new Wallet(key).address}`);
       expect(text).to.not.contain(key);
       expect(text).to.not.contain(key.slice(2));
+      // The closing advice is right for either key, and says never to use one key for both.
+      expect(text).to.contain("If this is the relayer's key");
+      expect(text).to.contain("If this is the deployer's key");
+      expect(text).to.contain("Never use one key for both");
       if (process.platform !== "win32") expect(statSync(file).mode & 0o077).to.equal(0); // only its owner can read it
       // A second run does not overwrite it.
       const again: string[] = [];

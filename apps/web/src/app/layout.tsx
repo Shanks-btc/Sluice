@@ -12,6 +12,7 @@ import { Footer } from "../components/footer";
 import { Nav } from "../components/nav";
 import { SITE_DESCRIPTION, SITE_TITLE } from "../content/copy";
 import { loadConfigFromProcess } from "../lib/config";
+import { content } from "../lib/content";
 
 export async function generateMetadata(): Promise<Metadata> {
   const { siteUrl } = loadConfigFromProcess();
@@ -49,7 +50,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <ConfigProvider config={config}>
           <Nav />
           <main id="main">{children}</main>
-          <Footer repoUrl={config.repoUrl} />
+          <Footer repoUrl={config.repoUrl} deployed={content.evidence.rows.some((r) => r.network === "mainnet" && r.event === "Deployed")} />
         </ConfigProvider>
       </body>
     </html>

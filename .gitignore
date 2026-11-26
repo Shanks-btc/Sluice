@@ -14,6 +14,11 @@ evidence-draft.json
 deployment.json
 # Written by scripts/live/deploy-test-token.ts: the address of a token with no value on the testnet.
 testnet-token.json
+# The testnet rehearsal (pnpm rehearsal:testnet): where it got to, and the throwaway keys, journal and logs of that run.
+rehearsal-state.json
+# A local run against mainnet (docs/LOCAL-MAINNET-RUN.md): the facilitator's journal, an agent key and the proxy's files.
+.local-mainnet/
+.rehearsal/
 # The web app: build output, generated content and fonts copied from packages, test output.
 .next/
 next-env.d.ts

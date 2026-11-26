@@ -1,8 +1,10 @@
 # Risks
 
 What can go wrong, who can do it, and what a user can still do about it. Each statement says what backs it.
-Nothing here has been run on a QIE network: every contract behaviour below was shown on a local copy of QIE
-mainnet (a fork), and every fact about the live chain is a read-only query, dated.
+Every contract behaviour below was shown on a local copy of QIE mainnet (a fork), and every fact about the
+live chain is a read-only query, dated. What has happened on QIE mainnet is what [EVIDENCE.md](EVIDENCE.md)
+records. The behaviour described here is backed by what each statement names, not by those rows. Section 7 says
+which things a founder-run row now shows happened.
 
 ## 1. QUSDC's admin can burn any holder's balance
 
@@ -21,7 +23,9 @@ Read from QIE mainnet on 2026-11-18 (block 11,996,097) with read-only calls:
 
 On a local fork, `test/fork/qusdc.fork.test.ts` impersonates the admin, grants it `VAULT_ROLE`, and burns QUSDC
 from an ordinary wallet and from the router. Both work. That is what "the admin key can burn any holder's
-balance" means in practice. It was not tried on the live chain, because nothing was sent.
+balance" means in practice. No burn was sent on the live chain: that check sent nothing. What was read there is in the next paragraph.
+
+Read again on 2026-11-22 (block 12,085,422), by `pnpm live:facts` with read-only calls: every row of the table above is unchanged, and the token's total supply is 8,929.088928 QUSDC. The node was also asked to run `burn(holder, 1)` as the holder of `VAULT_ROLE`, on the QUSDC held by the QUSDC/WQIE pool, without sending it: it ran the call, and it refused the same call made from an address with no role. That is a simulation by the node, so nothing was burned, and it shows that the role check separates the two, which is what the table says. The token does not list its role holders, so these reads cannot show that the two named addresses are the whole list of holders. [MAINNET-PREFLIGHT.md](MAINNET-PREFLIGHT.md) has the output.
 
 What it means for Sluice:
 
@@ -97,7 +101,17 @@ Read-only queries to `https://rpc1mainnet.qie.digital/` at blocks 11,996,097 to 
 
 ## 7. What was not tested
 
-- Anything on QIE mainnet or testnet. No transaction was sent, so `docs/EVIDENCE.md` has no rows.
+- Anything on QIE mainnet beyond what the rows of `docs/EVIDENCE.md` show, and anything on the testnet. All of those rows
+  are founder-run. Among them: a start with no QIE (the payer held 0 QIE before the relayer's top-up of QIE); three paid
+  calls settled, 0.002 QUSDC for `dex_quote`, 0.005 for `contract_lookup` and 0.010 for `token_risk_check`; the builder's
+  withdrawal of 0.016830 QUSDC; and the payer's refund of 0.003 QUSDC. Each shows that it happened on that day. None shows
+  how often it works, how it behaves under load, or that it works for anyone else. No row records a session being authorised
+  or revoked or a hosted service, and there is no testnet row.
+- Use by anyone outside the project. Every wallet in the mainnet rows is on the founder list, and `pnpm evidence:summary`
+  counted 0 paid calls, 0 distinct payers and 0 distinct builders from outside it on 2026-11-26.
+- Signing with a real wallet (QIE Wallet or MetaMask). The web app's browser tests use a mock wallet that signs with
+  throwaway keys, and no row says which program signed a transaction. Whether a real wallet can sign a transaction without
+  sending it, which a start with no QIE from the web app needs, is unknown.
 - How the real network orders, delays or drops transactions.
 - A very large batch against the real per-transaction gas limit.
 - The branch of `domainSeparator()` that rebuilds the EIP-712 domain if the chain id changes (for example after a chain
@@ -105,9 +119,12 @@ Read-only queries to `https://rpc1mainnet.qie.digital/` at blocks 11,996,097 to 
 - The behaviour of QUSDC's admin or vault on the live chain. Its effect was shown only on a fork.
 - Real MCP clients. The proxy and the wallet MCP were run as separate processes under a test client on a local chain, and the
   Claude Code and Cursor configurations in `packages/proxy/README.md` were written from the clients' documented formats and were
-  not run in either client.
+  not run in either client. The mainnet paid-call rows show signed payments being settled for a tool id. They do not show that
+  an MCP client, the proxy or the wallet MCP made a call, or that a tool ran.
 - A facilitator run by anyone else, a public relayer under load, and the real network's behaviour with the relayer's transactions
-  (ordering, delay, replacement). The facilitator was run against a local chain and a local fork.
+  (ordering, delay, replacement). The facilitator was tested against a local chain and a local fork. The founder-run mainnet
+  rows, a start with no QIE and three settlements submitted by someone other than the payer, the payee and the signer, say
+  nothing about any of these.
 - The Claude and OpenAI directories and any other place a paid server might be listed. Nothing was listed anywhere.
 - Resolving `.qie` names. No documented on-chain read for QIE ID names was found, so nothing resolves them.
 - The Docker images. The Docker daemon was not running where they were written, so neither image was built. The build steps (install
@@ -115,13 +132,20 @@ Read-only queries to `https://rpc1mainnet.qie.digital/` at blocks 11,996,097 to 
   context that follows `.dockerignore`.
 - A hosted facilitator or tool server. They were run as separate processes on a local chain and on a fork, behind a proxy that drops
   messages on purpose and with the process killed (SIGKILL) at three points of a batch's life. Nothing was run on a VPS or on
-  Railway, behind a real TLS proxy, or under real traffic.
+  Railway, behind a real TLS proxy, or under real traffic. No mainnet row shows a hosted service.
 - The `SIGTERM` handler as a signal. A signal ends a process on Windows without running a handler, so the shutdown function was
   called directly and the signal itself was not sent.
-- The explorer's verification endpoint. `pnpm live:verify` was run against a stand-in that holds the endpoint's documented shape,
-  not against the real explorer, and no testnet explorer address is known to this repository.
-- The recorder against a real QIE network. It was run against a local chain whose chain id is mainnet's, with every run labelled
-  `fork`. A mainnet or testnet row has never been written by it.
+- The explorer's verification, beyond one vault. The tests of `pnpm live:verify` use a stand-in that holds the endpoint's
+  documented shape. The real explorer was tried from this repository on 2026-11-26, for the vault only
+  ([EXPLORER-VAULT-INVESTIGATION.md](EXPLORER-VAULT-INVESTIGATION.md)), and no testnet explorer endpoint was tried.
+- What the explorer's page for the vault rests on. The explorer holds no creation transaction for the vault, so its verification
+  compared the running code and not the code that created it. The six values the constructor wrote into the code are checked by
+  `pnpm live:vaultcheck`, which needs no explorer. The explorer can change or lose what it shows; the saved answer in
+  [explorer/vault-record.json](explorer/vault-record.json) is of one day.
+- Part of the recorder against a real QIE network. It has written mainnet rows, which `pnpm evidence:check` reads back from the
+  chain, and every claim it knows has a mainnet row: `deploy`, `verify-link`, `deposit`, `withdraw`, `refund`,
+  `relayed-start`, `settle-batch` and `paid-call-settlement`. What it refuses was tried on a local chain whose chain id is
+  mainnet's, with every run labelled `fork`, not against the real network. No testnet row has been written.
 - A person outside the project following `docs/TRY-IT-BUILDER.md` or `docs/TRY-IT-AGENT.md`. The two pages were followed in a test.
 
 ## 8. The MCP layer: what it adds, and what each part can and cannot do

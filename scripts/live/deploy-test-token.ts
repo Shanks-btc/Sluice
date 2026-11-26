@@ -8,7 +8,8 @@
 // given by mistake is refused too. The router's deploy script still refuses any token but QUSDC on mainnet. The token is worth nothing and
 // anyone can mint it. This script also refuses to run without SLUICE_APPROVE=deploy-test-token and stops at its spending caps.
 import { writeFileSync } from "node:fs";
-import { JsonRpcProvider, Wallet } from "ethers";
+import { Wallet } from "ethers";
+import { chooseRpc, providerFor } from "../../src/rpc-use";
 import { GuardError, MAX_GAS_PRICE_WEI, formatQie, redact, requireApproval, SpendMeter } from "../../src/guard";
 import { TESTNET_CHAIN_ID, deployTestToken, testTokenPlan } from "../../src/test-token";
 import type { Env } from "../../src/live";
@@ -20,7 +21,7 @@ export async function main(env: Env = process.env, log: (line: string) => void =
   const approval = requireApproval("deploy-test-token", env, testTokenPlan(MAX_GAS_PRICE_WEI));
   if (approval.network !== "testnet") throw new GuardError("refusing to run deploy-test-token: SLUICE_NETWORK must be testnet");
 
-  const provider = new JsonRpcProvider(approval.rpcUrl, approval.chainId);
+  const provider = providerFor(await chooseRpc(approval.network, env.SLUICE_RPC_URL, log), approval.chainId);
   const reported = BigInt(String(await provider.send("eth_chainId", [])));
   if (reported !== BigInt(TESTNET_CHAIN_ID)) throw new GuardError(`refusing to run deploy-test-token: the RPC is on chain ${reported}, not the testnet's ${TESTNET_CHAIN_ID}`);
   const signer = new Wallet(approval.privateKey(), provider);

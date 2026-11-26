@@ -6,7 +6,8 @@
 //  - Network: a page that reads QIE may reach QIE's RPC. Only the demo and the wallet page may reach a facilitator the person
 //    types in, which can be any https address or a local one.
 //  - Nothing may frame the app, and nothing may load a plug-in.
-export const QIE_RPC_ORIGINS = ["https://rpc1mainnet.qie.digital", "https://rpc1testnet.qie.digital"] as const;
+// QIE publishes five endpoints for each network. The pages read through the first that answers and fall back to the others (src/lib/rpc-endpoints.ts).
+export const QIE_RPC_ORIGINS: readonly string[] = ["mainnet", "testnet"].flatMap((net) => [1, 2, 3, 4, 5].map((n) => `https://rpc${n}${net}.qie.digital`));
 
 /** Pages that talk to a facilitator whose address the person chooses. */
 export const FACILITATOR_PATHS = ["/demo", "/wallet"] as const;

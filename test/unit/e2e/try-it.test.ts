@@ -21,7 +21,7 @@ import { inheritedEnv, ROOT, tsCommand } from "../../helpers/spawn";
 import { freshChain, fundWallet, startStack, throwawayWallet } from "../../helpers/stack";
 import type { Stack } from "../../helpers/stack";
 
-const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
+const read = (path: string) => readFileSync(join(ROOT, path), "utf8").replace(/\r\n/g, "\n"); // LF whatever git's autocrlf did to the checkout
 
 /** The code block that starts with a given first line. */
 function block(markdown: string, firstLine: string, lang: string): string {
@@ -183,7 +183,10 @@ describe("Try it: the builder's page and the owner's page, followed", function (
       writeFileSync(path, JSON.stringify(cfg));
       const out: string[] = [];
       const before = (await s.router.payerBalance(ownerKey.address)) as bigint;
-      const code = await smoke(["--config", path, "--tool", "summarise", "--args", '{"url":"https://example.com"}'], { SLUICE_AGENT_KEY: agentKey.privateKey }, {
+      // The arguments as the page's own command gives them.
+      const command = read("docs/TRY-IT-AGENT.md").split(/\r?\n/).map((l) => l.trim()).find((l) => l.startsWith("pnpm client:smoke ") && l.includes("--tool summarise")) as string;
+      expect(command).to.match(/--arg url=https:\/\/example\.com$/);
+      const code = await smoke(["--config", path, ...command.split(" ").slice(command.split(" ").indexOf("--tool"))], { SLUICE_AGENT_KEY: agentKey.privateKey }, {
         log: (l) => out.push(l),
         command: tsCommand("packages/proxy/src/cli.ts", ["--config", path]),
       });
@@ -266,7 +269,7 @@ describe("Try it: the builder's page and the owner's page, followed", function (
       await bad(["authorize", "--agent", "nope", "--budget", "1", "--per-call", "0.1", "--tool", `x=${builderAddress()}`], /--agent is not an address/, 2);
       await bad(["authorize", "--agent", throwawayWallet().address, "--budget", "1", "--per-call", "0.1", "--days", "0", "--tool", `x=${builderAddress()}`], /--days must be/, 2);
       await bad(["authorize"], /needs --agent/, 2);
-      await bad(["bogus"], /the command is start or authorize/, 2);
+      await bad(["bogus"], /the command is start, authorize, revoke, withdraw or refund/, 2);
       await bad(["start", "--amount", "1", "--bogus", "x"], /unknown option/, 2);
       expect(getAddress(builderAddress())).to.match(/^0x/);
     });
