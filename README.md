@@ -307,7 +307,7 @@ A test keeps this section, the status table and the evidence file in agreement.
 
 ## Safety and tests
 
-`pnpm test` runs **1838** tests on a local chain. `pnpm test:fork` runs **48** tests against a fork of QIE mainnet with the real QUSDC and the real QIEDEX pool. A test counts them without running them and fails if these numbers are out of date.
+`pnpm test` runs **1999** tests on a local chain. `pnpm test:fork` runs **48** tests against a fork of QIE mainnet with the real QUSDC and the real QIEDEX pool. A test counts them without running them and fails if these numbers are out of date.
 
 What they cover:
 
@@ -330,6 +330,9 @@ What they cover:
 - The facilitator's queue across a stop: the journal's rules (a half-written last line, a damaged line, a full disk, a second process), and a stop at each point of a batch's life, including a real SIGKILL of the facilitator as its own process behind a node that drops messages on purpose, after which every intent settles once and none is lost.
 - The facilitator's operation: the kill switch, the caps on its own QIE, the low-balance flag, the limits on callers, logs that hold no key or signature, the settings that refuse to start, an orderly stop, and a time limit on every request to the node.
 - The hosted tool server: its settings and refusals, telling a paid call from an unpaid one, the limits on callers, and a proxy, an HTTP tool server and a facilitator run as three separate processes, on a local chain and on a fork with the real QUSDC.
+- The two services as serverless functions, on a local chain with a stand-in for their Redis database: one set of tests for the memory, file and Redis ledgers; copies that share one relayer key and drain at once, with random delays, where each payment settles once and no nonce is used twice, and a control with the lock taken away; a holder that lost its lock; a copy that stopped part-way; the shared caps, switches and rate limits; the drain endpoint's secrets; one payment given to two copies of the tool server; and the project files, the sweeper's workflow and the guide's variables. Neither has been run on Vercel or Upstash.
+- One database for both services on Vercel: fixed key prefixes; a guard on the tool server's client with a test for each request it refuses, and its two scripts held to naming keys they are given; every key both functions touch on a shared database written down and held to its own prefix; a facilitator that refuses a database a tool server uses unless told to, at start and while running; and the switch in the settings holding whatever the database says. The guard is in the code alone: both services hold one token.
+- No served call left unpaid on Vercel: a payment held before the tool runs and answered only once it has settled, against each way one attempt to settle can fail, with the sweeper late and in time, a control showing the old order leaving a call served and unpaid, the proxy and the web app sending the same payment again, and why a payment's life was left at five minutes.
 - The go-live tooling: the pre-flight check, the dry run (no transaction is sent, which a count of the methods that reached the node shows), the contract verification against a stand-in for the explorer, the testnet token that refuses mainnet, and the key maker.
 - The evidence recorder: a genuine deposit, withdrawal, refund, batch, paid call, zero-QIE start and deployment are accepted; a wrong event, a failed transaction, a wrong network, a duplicate, a payer settling their own payment and a start that was not from zero QIE are refused and write nothing; a row from a fork or the testnet cannot be read as mainnet proof; and founder wallets are left out of the distinct counts.
 - The real-client kit and the two "try it" pages: the scripted client through the proxy, the tool server and the facilitator, and the pages' own code and commands, run as written.
@@ -338,7 +341,7 @@ What they cover:
 
 `pnpm mutation:web` changes one condition at a time in the web app's logic, 66 changes in all, in the status badges, amount parsing, the network check, the confirm gate, the checks on what a wallet returns, input validation, the Content Security Policy, the rate limiter, the Markdown renderer and the contrast maths, and, for the live pages, the gate that stops a payment being signed before Confirm, each check on the price a tool server asks, the deposit cap, the payments kept across a reload, the activity list and its CSV file, the status page's verdicts, and the token on the services' private metrics paths, the request ids and the list of sites allowed to call the tool server. Run it on a copy for the same reason.
 
-`pnpm mutation:live` changes one condition at a time in the go-live code, 73 changes in all, in the facilitator's journal and its recovery, its kill switch, caps and limits, its settings, the evidence recorder and file, and the mainnet path: the deploy's guards (the owner, the fee recipient, the deployer and the relayer kept apart, the token and the node's chain checked, mistyped options refused), the funding calculator, QUSDC's facts, the settings files and the fork evidence. Run it on a copy for the same reason.
+`pnpm mutation:live` changes one condition at a time in the go-live code, 139 changes in all, in the facilitator's journal and its recovery, its kill switch, caps and limits, its settings, the guards of the serverless facilitator and tool server (the lock, its fence, the check at signing, both switches, the caps, the claim before a run, holding a payment until it settles, and sharing one database), the evidence recorder and file, and the mainnet path: the deploy's guards (the owner, the fee recipient, the deployer and the relayer kept apart, the token and the node's chain checked, mistyped options refused), the funding calculator, QUSDC's facts, the settings files and the fork evidence. Run it on a copy for the same reason.
 
 `pnpm mutation:check` changes one condition at a time in the verification, budget and cap code, 52 changes in all, and reports whether a test failed for each. It edits files in place and puts them back, so run it on a copy.
 
@@ -409,7 +412,7 @@ Everything the founder needs to put Sluice on a QIE network and to check what ha
 | Deploy to mainnet, with a funding plan from the measured gas, and the places to stop | [docs/MAINNET-RUNBOOK.md](docs/MAINNET-RUNBOOK.md) |
 | Run the facilitator and the tool server on your own computer against mainnet, start a payer with no QIE, pay three calls, withdraw and refund (a local run, not a hosted product) | [docs/LOCAL-MAINNET-RUN.md](docs/LOCAL-MAINNET-RUN.md) |
 | Host the facilitator and the tool server on Railway: the click-by-click steps, the exact variables (which are public, which are secret, which you fill in), the kill switch drill and how to roll back | [docs/HOSTING-RAILWAY.md](docs/HOSTING-RAILWAY.md) |
-| Host the web app on Vercel: the project settings, the `NEXT_PUBLIC_` values, and the origin to hand back to the two services | [docs/HOSTING-VERCEL.md](docs/HOSTING-VERCEL.md) |
+| Host everything on Vercel: the facilitator and the tool server as functions sharing one Redis database, with what that gives up (the variables you type, which are secrets, the sweeper in GitHub, both kill switches, the free plan's daily commands, and the limits that were not checked on the platform), then the web app and its `NEXT_PUBLIC_` values | [docs/HOSTING-VERCEL.md](docs/HOSTING-VERCEL.md) |
 | Host the facilitator: a queue that survives a restart, a kill switch, caps and limits | [docs/DEPLOY-FACILITATOR.md](docs/DEPLOY-FACILITATOR.md) |
 | Host the demo tool server over HTTP, with limits on callers | [docs/DEPLOY-TOOL-SERVER.md](docs/DEPLOY-TOOL-SERVER.md) |
 | Run the two services day to day: checks, alerts, the kill-switch drill, backups, key rotation, incidents | [docs/OPERATIONS.md](docs/OPERATIONS.md) |
@@ -514,6 +517,10 @@ Names only. Values go in a local `.env` that is never committed. Copy `.env.exam
 | `SLUICE_TOOLS_CORS_ORIGINS` | tool server | Exact origins (https, or http on this machine) that may call it from a web page, separated by commas. Empty means none. Never a wildcard. |
 | `SLUICE_TOOLS_METRICS_TOKEN` | tool server | Secret. The bearer token for the private metrics path, 24 to 200 characters. With none set, the path does not exist. |
 | `SLUICE_FACILITATOR_METRICS_TOKEN` | facilitator | Secret. The bearer token for the private metrics path, 24 to 200 characters. With none set, the path does not exist. |
+| `SLUICE_FACILITATOR_SWEEP_SECRET` | facilitator on Vercel | Secret. The bearer token the scheduled sweeper sends to `/internal/drain`, 24 to 200 characters. The function refuses to start without it. |
+| `SLUICE_REDIS_REST_URL` | facilitator and tool server on Vercel | The https address of the Upstash Redis database. Left empty, `UPSTASH_REDIS_REST_URL` or `KV_REST_API_URL` is read, with its token. |
+| `SLUICE_REDIS_REST_TOKEN` | facilitator and tool server on Vercel | Secret. The database's token. Never printed. |
+| `SLUICE_FACILITATOR_SHARED_DATABASE` | facilitator on Vercel | Exactly `one-token-for-both-services` to accept a database the tool server also uses. Without it the facilitator refuses such a database. |
 | `SLUICE_TOOLS_MAX_BODY_BYTES` | tool server | Largest request body. Default 32768, at most 1048576. |
 | `SLUICE_TOOLS_RATE_LIMIT_IP` | tool server | Requests per minute from one address. Default 300. |
 | `SLUICE_TOOLS_RATE_LIMIT_UNPAID` | tool server | Requests per minute from one address that carry no payment. Default 60. |
@@ -563,9 +570,12 @@ tsconfig.json                     TypeScript settings for typechecking and the t
 eslint.config.mjs                 lint rules for the web app and its tests
 .dockerignore                     what a Docker build may see: no keys, no queue files, no installed packages
 .gitattributes                    keeps text files LF in the working tree, and binary and key-like files untouched
+.vercelignore                     what an upload to Vercel from a working folder leaves out: key files, settings files, the deployment record
 .github/
   ISSUE_TEMPLATE/
     i-tried-sluice.yml            the form for reporting what happened when someone tried Sluice
+  workflows/
+    sluice-drain.yml              asks a facilitator on Vercel every five minutes to settle what is queued
 apps/
   web/
     public/
@@ -735,7 +745,7 @@ docs/
   FOUNDER-LOG.md                  a template for the founder to fill in
   GAS.md                          measured gas and cost
   HOSTING-RAILWAY.md              the facilitator and the tool server on Railway: steps, variables, the kill switch drill, rolling back
-  HOSTING-VERCEL.md               the web app on Vercel: settings, the public values, and the origin to hand back to the services
+  HOSTING-VERCEL.md               everything on Vercel: the two services as functions, their databases and variables, the sweeper, then the web app
   LOCAL-MAINNET-RUN.md            a run against mainnet with both programs on your own computer: the commands, the caps, what each step spends
   MAINNET-DRYRUN-LOG.md           the whole mainnet path run on a local fork with throwaway keys: a simulation, with the gas of each step
   MAINNET-GO-LIVE.md              the go-live as a one-page checklist: accounts and offline backups, the order, explorer checks, failure and redeploy, the facts to record
@@ -757,6 +767,10 @@ docs/
   spec-vectors.json               test vectors for the spec, from throwaway keys
 examples/
   paid-tools/
+    api/
+      index.js                    the function Vercel calls
+    public/
+      robots.txt                  asks crawlers to stay away
     src/
       bytecode.ts                 selectors, proxy slots and compiler metadata
       cli.ts                      starts the server over stdio or HTTP
@@ -767,27 +781,37 @@ examples/
       rpc.ts                      read-only RPC and explorer access
       server.ts                   registers the three tools with prices
       tokenRisk.ts                the token_risk_check tool
+      vercel.ts                   the tool server as a serverless function: what its copies share, and when it refuses to start
     Dockerfile                    the hosted tool server as a container image
     README.md                     the three example paid tools
     package.json                  package manifest
     tsconfig.json                 build settings
+    vercel.json                   the Vercel project: one function for every path
 packages/
   facilitator/
+    api/
+      index.js                    the function Vercel calls
+    public/
+      robots.txt                  asks crawlers to stay away
     src/
       caps.ts                     the hard caps, as constants
       cli.ts                      starts the service
       env.ts                      settings from the environment, and when it refuses to start
       index.ts                    exports
       killswitch.ts               the kill switch: an environment flag or a file
+      ledger.ts                   what the service records, as one interface, and its file or memory form
+      redis-ledger.ts             the same in Redis, for copies that run at once: scripts, the fenced lock and the stored kill switch
       relayer.ts                  the hot key behind the caps
       runtime.ts                  starting the facilitator from its settings and stopping it in order
       server.ts                   the HTTP endpoints
       service.ts                  verify, settle, flush, onboard and relay
       store.ts                    the record of accepted intents
+      vercel.ts                   the facilitator as a serverless function: its times, the drain after a payment, when it refuses to start
     Dockerfile                    the facilitator as a container image
     README.md                     the facilitator and its limits
     package.json                  package manifest
     tsconfig.json                 build settings
+    vercel.json                   the Vercel project: one function for every path, and a daily drain
   proxy/
     src/
       cli.ts                      starts the proxy
@@ -813,6 +837,9 @@ packages/
       paid-tool.ts                the paidTool middleware
       protocol.ts                 the intent, its hashing and its checks
       ratelimit.ts                a rate limiter, and which address a request came from
+      redis.ts                    Redis over Upstash's REST interface, the fixed key prefixes, and the rate limit copies share
+      redis-guard.ts              what a tool server may do with a database it shares: its own keys and scripts, and nothing else
+      redis-idempotency.ts        what each payment was used for, shared by copies of a tool server
       rpc.ts                      QIE's public endpoints, and choosing one that answers with the right chain id
       timeout.ts                  time limits for reads from a node
       util.ts                     small shared helpers
@@ -909,6 +936,8 @@ test/
     chaos.ts                      a node and a disk that fail on purpose, and processes to kill
     evidence-template.ts          docs/EVIDENCE.md as it was before any row was recorded, for tests that build on it
     explorer.ts                   a stand-in explorer that answers from the local chain
+    fake-redis.ts                 a stand-in Redis that runs the real scripts in a Lua engine, and Upstash's REST interface over it
+    fengari.d.ts                  the types of the Lua engine, as far as the stand-in uses it
     fork.ts                       fork helpers
     index.ts                      shared test helpers
     mock-wallet.ts                a mock wallet that signs with throwaway keys
@@ -937,7 +966,13 @@ test/
       crash.test.ts               a killed facilitator, recovered from its journal and the chain
       durability.test.ts          the journal, and a stop at each point of a batch's life
       http-onboard.test.ts        HTTP, the start with no QIE, relayed requests
+      ledger.test.ts              one set of tests for the memory, file and Redis ledgers
       operations.test.ts          the kill switch, caps, limits, logs, settings and an orderly stop
+      serverless-concurrency.test.ts  copies that drain at once: one payment settled once, no nonce twice, with a control
+      serverless-handlers.test.ts the two functions' settings and requests, the drain, and what copies share
+      shared-database.test.ts     one database for both services: every refusal of the guard, the keys each touches, the refusal to share untold
+      unpaid.test.ts              one failed attempt to settle, of each kind: no call answered and left unpaid, with a control
+      validity.test.ts            what a payment's lifetime decides, which is why it stays five minutes
       service-ops.test.ts         the facilitator's request ids, logs and private metrics
       service.test.ts             verify, settle, caps and the relayer
     proxy/
@@ -969,6 +1004,7 @@ test/
     golive-plan.test.ts           the go-live plan: the addresses, the refusals, the chain, and the printed commands checked against the real scripts and guards
     hostcheck.test.ts             the host check: every PASS, WARN and FAIL, the origin check, and a run against a real facilitator and tool server
     hosting.test.ts               the Dockerfiles, the entrypoints, and the hosting guides' variables held to what the services read and live:wire writes
+    hosting-vercel.test.ts        the Vercel project files, the sweeper's workflow run on a stand-in, and the guide's variables held to the code
     guard.test.ts                 the spend guard and live scripts
     live-tools.test.ts            the pre-flight check, dry run, verification, test token and key maker
     live.test.ts                  the live library on a local chain

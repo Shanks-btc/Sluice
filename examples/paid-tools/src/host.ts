@@ -14,10 +14,12 @@ import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { Contract, Network, getAddress } from "ethers";
 import {
+  BodyTooLarge,
   FacilitatorClient,
   PAYMENT_META_KEY,
   QUSDC_ADDRESS,
   RateLimiter,
+  readJsonBody,
   RequestCounter,
   FailoverJsonRpcProvider,
   NoHealthyEndpoint,
@@ -36,7 +38,7 @@ import {
   routeLabel,
   silentLogger,
 } from "@sluice/sdk";
-import type { Logger, LogLevel } from "@sluice/sdk";
+import type { IdempotencyStore, Limiter, Logger, LogLevel } from "@sluice/sdk";
 import { PUBLIC_EXPLORER, explorerClient, rpcFromProvider, withTimeout } from "./rpc";
 import type { ExplorerGet, Rpc } from "./rpc";
 import { DEFAULT_PRICES, paidToolsFactory } from "./server";
@@ -220,6 +222,21 @@ export type ToolServerOptions = {
   now?: () => number;
   /** How long one whole request may take before it is answered with 504. */
   handlerTimeoutMs?: number;
+  /** Limiters to use instead of ones in memory: those that every copy of the server shares. */
+  limiters?: { ip: Limiter; unpaid: Limiter };
+  /** Where what each payment was used for is kept. A server that runs as several copies must give one they share. */
+  paywallStore?: IdempotencyStore;
+  /** Hold each payment at the facilitator before the tool runs, and answer only once it has settled on chain. */
+  answerOnlyWhenSettled?: boolean;
+};
+
+export type ToolApp = {
+  /** The server's requests, as a listener that a node server or a serverless function can call. */
+  listener: (req: IncomingMessage, res: ServerResponse) => Promise<void>;
+  /** The QUSDC address the router holds, which payments are in. */
+  asset: string;
+  /** Lets go of the connection to the node. */
+  destroy(): void;
 };
 
 export type ToolServer = {
@@ -236,25 +253,8 @@ const KNOWN_ROUTES = ["/health", "/mcp", METRICS_PATH] as const;
 
 const rpcError = (code: number, message: string) => JSON.stringify({ jsonrpc: "2.0", error: { code, message }, id: null });
 
-function readBody(req: IncomingMessage, maxBytes: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    req.on("data", (chunk: Buffer) => {
-      size += chunk.length;
-      if (size > maxBytes) {
-        reject(new Error("too large"));
-        req.destroy();
-        return;
-      }
-      chunks.push(chunk);
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    req.on("error", () => reject(new Error("failed")));
-  });
-}
-
-export async function createToolServer(options: ToolServerOptions): Promise<ToolServer> {
+/** The tool server's requests and what they need, with no server around them. */
+export async function createToolApp(options: ToolServerOptions): Promise<ToolApp> {
   const env = options.env;
   const log = options.logger ?? silentLogger;
   const network = Network.from(env.chainId);
@@ -298,7 +298,7 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
   }
 
   const facilitator = new FacilitatorClient({ url: env.facilitatorUrl, timeoutMs: env.rpcTimeoutMs });
-  const paywall = createPaywall({ facilitator, router: env.router, vault, asset, chainId: env.chainId });
+  const paywall = createPaywall({ facilitator, router: env.router, vault, asset, chainId: env.chainId, store: options.paywallStore, answerOnlyWhenSettled: options.answerOnlyWhenSettled });
   const build = paidToolsFactory({
     paywall,
     payee: env.payee,
@@ -306,9 +306,9 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
     explorer: options.explorer ?? (env.explorerUrl ? explorerClient(env.explorerUrl, fetch, env.rpcTimeoutMs) : undefined),
     prices: env.prices,
   });
-  const listener = mcpRequestListener(build);
-  const ipLimiter = new RateLimiter(env.ipPerMinute, 60_000, 10_000, options.now);
-  const unpaidLimiter = new RateLimiter(env.unpaidPerMinute, 60_000, 10_000, options.now);
+  const mcp = mcpRequestListener(build);
+  const ipLimiter: Limiter = options.limiters?.ip ?? new RateLimiter(env.ipPerMinute, 60_000, 10_000, options.now);
+  const unpaidLimiter: Limiter = options.limiters?.unpaid ?? new RateLimiter(env.unpaidPerMinute, 60_000, 10_000, options.now);
   const handlerTimeout = options.handlerTimeoutMs ?? 60_000;
 
   const reply = (res: ServerResponse, status: number, text: string, extra: Record<string, string> = {}) => {
@@ -321,12 +321,27 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
   // The token is a function that is not an own enumerable property, so a settings object that was copied (spread) has lost it: that means no token, never an error.
   const metricsToken = typeof env.metricsToken === "function" ? env.metricsToken() : undefined;
 
-  const server = createServer((req, res) => {
-    void (async () => {
+  const listener = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
       const started = Date.now();
       // Every request has an id (the caller's, if well formed), which comes back in x-request-id and in the log line.
       const requestId = requestIdFor(req.headers["x-request-id"]);
       res.setHeader("x-request-id", requestId);
+      /** Whether the limiter lets the call through. A limiter that cannot be asked refuses it: nothing is served uncounted. */
+      const within = async (limiter: Limiter, client: string, kind: "any" | "unpaid", why: string): Promise<boolean> => {
+        let answer;
+        try {
+          answer = await limiter.hit(client);
+        } catch {
+          log.error("the rate limit could not be counted, so the request is refused", { requestId, kind });
+          reply(res, 503, rpcError(-32603, "the server cannot count requests, so it serves none; try again later"));
+          return false;
+        }
+        if (answer.ok) return true;
+        calls.rateLimited += 1;
+        log.warn("rate limited", { requestId, client, kind });
+        reply(res, 429, rpcError(-32029, `${why}; try again in ${answer.retryAfterSeconds} seconds`), { "retry-after": String(answer.retryAfterSeconds) });
+        return false;
+      };
       try {
         const url = new URL(req.url ?? "/", "http://localhost");
         const route = routeLabel(url.pathname, KNOWN_ROUTES);
@@ -375,41 +390,24 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
         if (req.method !== "POST") return reply(res, 405, rpcError(-32000, "method not allowed"), { allow: "POST" });
 
         const client = clientAddress(req.socket.remoteAddress, req.headers["x-forwarded-for"], env.trustedProxyHops);
-        const any = ipLimiter.hit(client);
-        if (!any.ok) {
-          calls.rateLimited += 1;
-          log.warn("rate limited", { requestId, client, kind: "any" });
-          return reply(res, 429, rpcError(-32029, `too many requests; try again in ${any.retryAfterSeconds} seconds`), { "retry-after": String(any.retryAfterSeconds) });
-        }
+        if (!(await within(ipLimiter, client, "any", "too many requests"))) return;
         const declared = Number(req.headers["content-length"]);
         if (Number.isFinite(declared) && declared > env.maxBodyBytes) {
           req.resume();
           return reply(res, 413, rpcError(-32600, "the request is too large"), { connection: "close" });
         }
-        let text: string;
-        try {
-          text = await readBody(req, env.maxBodyBytes);
-        } catch {
-          return reply(res, 413, rpcError(-32600, "the request is too large"), { connection: "close" });
-        }
         let body: unknown;
         try {
-          body = JSON.parse(text);
-        } catch {
+          body = await readJsonBody(req, env.maxBodyBytes);
+        } catch (err) {
+          if (err instanceof BodyTooLarge) return reply(res, 413, rpcError(-32600, "the request is too large"), { connection: "close" });
           return reply(res, 400, rpcError(-32700, "the request is not JSON"));
         }
         if (typeof body !== "object" || body === null) return reply(res, 400, rpcError(-32600, "the request is not a JSON-RPC message"));
         const paid = carriesPayment(body);
         if (paid) calls.paid += 1;
         else calls.unpaid += 1;
-        if (!paid) {
-          const unpaid = unpaidLimiter.hit(client);
-          if (!unpaid.ok) {
-            calls.rateLimited += 1;
-            log.warn("rate limited", { requestId, client, kind: "unpaid" });
-            return reply(res, 429, rpcError(-32029, `too many requests without a payment; try again in ${unpaid.retryAfterSeconds} seconds`), { "retry-after": String(unpaid.retryAfterSeconds) });
-          }
-        }
+        if (!paid && !(await within(unpaidLimiter, client, "unpaid", "too many requests without a payment"))) return;
         const what = describeRequest(body);
         res.once("finish", () => log.info("request", { requestId, ...what, paid, status: res.statusCode, ms: Date.now() - started }));
         let timer: NodeJS.Timeout | undefined;
@@ -420,15 +418,22 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
             resolve();
           }, handlerTimeout);
         });
-        await Promise.race([listener(req, res, body), late]);
+        await Promise.race([mcp(req, res, body), late]);
         if (timer) clearTimeout(timer);
       } catch {
         // Never put an exception's text, which could hold a URL or a key fragment, in a response or a log line.
         log.error("unexpected error while serving a request");
         reply(res, 500, rpcError(-32603, "internal error"));
       }
-    })();
-  });
+  };
+
+  return { listener, asset, destroy: () => provider.destroy() };
+}
+
+export async function createToolServer(options: ToolServerOptions): Promise<ToolServer> {
+  const env = options.env;
+  const app = await createToolApp(options);
+  const server = createServer((req, res) => void app.listener(req, res));
   server.headersTimeout = 10_000;
   server.requestTimeout = 20_000;
   server.keepAliveTimeout = 5_000;
@@ -436,7 +441,7 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
 
   return {
     server,
-    asset,
+    asset: app.asset,
     listen: () =>
       new Promise<number>((resolve, reject) => {
         server.once("error", reject);
@@ -448,7 +453,7 @@ export async function createToolServer(options: ToolServerOptions): Promise<Tool
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => {
-          provider.destroy();
+          app.destroy();
           resolve();
         });
         server.closeIdleConnections();

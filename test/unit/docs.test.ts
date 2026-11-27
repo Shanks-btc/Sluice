@@ -940,7 +940,10 @@ describe("Docs: the numbers the README gives about the new tooling are the real 
     const match = /`pnpm mutation:live` changes one condition at a time in the go-live code, (\d+) changes in all/.exec(section(README, "Safety and tests"));
     expect(match, "the README states the number of go-live mutations").to.not.equal(null);
     expect(Number(match![1])).to.equal(LIVE_MUTATIONS.length);
-    expect(LIVE_MUTATIONS.length).to.be.within(60, 120); // 30 for the journal and the recorder, and 43 for the mainnet path's guards and tools
+    // 30 for the journal and the recorder, 43 for the mainnet path's guards and tools, and V01 to V66 for the hosted services' guards.
+    // The lower figure is the number there are now, so that none is dropped unnoticed.
+    expect(LIVE_MUTATIONS.length).to.be.within(139, 180);
+    expect(new Set(LIVE_MUTATIONS.map((m) => m.id)).size, "no two share an id").to.equal(LIVE_MUTATIONS.length);
   });
 
   it("every web command the README gives is a script, and the web app's own pages and checks exist", () => {

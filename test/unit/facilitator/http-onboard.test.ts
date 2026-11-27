@@ -145,7 +145,7 @@ describe("Facilitator: the zero-QIE start", function () {
     const m = await makePayment(s, wallet, wallet.address, requirementsFor(s, builder, USDC("0.01")));
     expect((await s.facilitator.settle(verifyBody(m))).success).to.equal(true);
     await s.facilitator.flush();
-    expect(s.facilitator.status(m.digest)?.status).to.equal("settled");
+    expect((await s.facilitator.status(m.digest))?.status).to.equal("settled");
   });
 
   it("tops up only the difference when the wallet already holds some QIE", async () => {

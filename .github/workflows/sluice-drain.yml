@@ -1,0 +1,46 @@
+# Asks the hosted facilitator to settle what is queued, every five minutes. A payment is normally settled right after it is accepted;
+# this catches what that missed. Two repository secrets, set in GitHub by the owner of the repository, and nowhere in this file:
+#   SLUICE_FACILITATOR_URL           the facilitator's https address
+#   SLUICE_FACILITATOR_SWEEP_SECRET  the same value as the setting of that name on the facilitator
+# GitHub runs scheduled workflows from the default branch only, may start them late or skip one when busy, and stops them in a public
+# repository after 60 days without activity. Calling the endpoint again, or twice at once, does no harm.
+name: Sluice drain
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+# The job reads nothing from the repository and writes nothing to it.
+permissions: {}
+
+concurrency:
+  group: sluice-drain
+  cancel-in-progress: false
+
+jobs:
+  drain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ask the facilitator to settle what is queued
+        env:
+          FACILITATOR_URL: ${{ secrets.SLUICE_FACILITATOR_URL }}
+          SWEEP_SECRET: ${{ secrets.SLUICE_FACILITATOR_SWEEP_SECRET }}
+        run: |
+          set -euo pipefail
+          if [ -z "$FACILITATOR_URL" ] && [ -z "$SWEEP_SECRET" ]; then
+            echo "::warning::not configured: set the two repository secrets, SLUICE_FACILITATOR_URL and SLUICE_FACILITATOR_SWEEP_SECRET"
+            exit 0
+          fi
+          if [ -z "$FACILITATOR_URL" ] || [ -z "$SWEEP_SECRET" ]; then
+            echo "::error::one of the two repository secrets is missing"
+            exit 1
+          fi
+          case "$FACILITATOR_URL" in
+            https://*) ;;
+            *) echo "::error::SLUICE_FACILITATOR_URL must be an https address"; exit 1 ;;
+          esac
+          # The secret goes to curl on standard input, so it is never an argument of a program. The answer holds counts only.
+          printf 'Authorization: Bearer %s\n' "$SWEEP_SECRET" |
+            curl --silent --show-error --fail --max-time 150 --request POST --header @- "${FACILITATOR_URL%/}/internal/drain"

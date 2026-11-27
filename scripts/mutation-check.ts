@@ -50,11 +50,11 @@ export const MUTATIONS: Mutation[] = [
   m("F04", SERVICE, "      if (intent.amount > s.perCallCap) return ERRORS.perCallCap;", "      if (false) return ERRORS.perCallCap;", "ignore an agent's per-call cap", [FS]),
   m("F05", SERVICE, "s.spent + pending.forAgent + intent.amount > s.budget", "s.spent + intent.amount > s.budget", "ignore an agent's queued spend against its budget", [FS]),
   m("F06", SERVICE, "      if (!allowed) return ERRORS.toolNotAllowed;", "      if (false) return ERRORS.toolNotAllowed;", "accept a tool the owner did not allow", [FS]),
-  m("F07", SERVICE, "    if (this.store.get(check.digest)) return { isValid: false, invalidReason: ERRORS.intentReplayed, payer };\n", "", "verify an intent that is already queued", [FS]),
+  m("F07", SERVICE, "      if (await this.ledger.get(check.digest)) return invalid(ERRORS.intentReplayed);\n", "", "verify an intent that is already queued", [FS]),
   m("F08", SERVICE, "      if (existing) return this.view(existing); // idempotent: the same intent is one record, however often it is sent\n", "", "queue the same intent again", [FS]),
-  m("F09", SERVICE, "p.count + 1 > this.caps.payerDailyIntents ||", "p.count + 1 > this.caps.payerDailyIntents + 1000 ||", "raise the per-payer daily count limit", [FS]),
-  m("F10", SERVICE, "g.count + 1 > this.caps.globalDailyIntents ||", "g.count + 1 > this.caps.globalDailyIntents + 1000 ||", "raise the global daily count limit", [FS]),
-  m("F11", SERVICE, "p.amount + amount > this.caps.payerDailyAmount", "p.amount + amount > this.caps.payerDailyAmount * 100n", "raise the per-payer daily amount limit", [FS]),
+  m("F09", SERVICE, "maxCount: this.caps.payerDailyIntents,", "maxCount: this.caps.payerDailyIntents + 1000,", "raise the per-payer daily count limit", [FS]),
+  m("F10", SERVICE, "maxCount: this.caps.globalDailyIntents,", "maxCount: this.caps.globalDailyIntents + 1000,", "raise the global daily count limit", [FS]),
+  m("F11", SERVICE, "maxAmount: this.caps.payerDailyAmount }", "maxAmount: this.caps.payerDailyAmount * 100n }", "raise the per-payer daily amount limit", [FS]),
   m("F12", SERVICE, "if (getAddress(String(a.args[0])) !== this.routerAddress) return refuse(", "if (false) return refuse(", "accept an approval for a spender that is not the router", [FH]),
   m("F13", SERVICE, "amount > this.caps.maxOnboardAmount) return refuse(", "amount > this.caps.maxOnboardAmount * 100n) return refuse(", "raise the cap on a zero-QIE start", [FH]),
   m("F14", SERVICE, "amount, 0n, text(\"nonce\")", "amount, 10n, text(\"nonce\")", "take a relayer fee in QUSDC on a relayed exit", [FH]),
@@ -62,8 +62,8 @@ export const MUTATIONS: Mutation[] = [
   // The relayer's hard limits
   m("R01", RELAYER, "    if (!this.#allow.has(to)) throw new CapError(\"destination_not_allowed\"", "    if (false) throw new CapError(\"destination_not_allowed\"", "call any contract, not just the router and the vault", [FS]),
   m("R02", RELAYER, "call.gasLimit <= 0n || call.gasLimit > this.#caps.gasLimitPerTx", "call.gasLimit <= 0n || call.gasLimit > this.#caps.gasLimitPerTx * 2n", "double the gas limit cap", [FS]),
-  m("R03", RELAYER, "if (this.#spent + this.#reserved + worst > this.#caps.dailyBudgetWei) {", "if (this.#spent + this.#reserved + worst > this.#caps.dailyBudgetWei * 100n) {", "raise the daily QIE budget a hundredfold", [FS]),
-  m("R04", RELAYER, "if (used * 2n >= budget) this.alert(\"budget_50\"", "if (used >= budget) this.alert(\"budget_50\"", "raise the half-budget alert only when the budget is gone", [FS]),
+  m("R03", RELAYER, "reserveBudget(day, worst, this.#caps.dailyBudgetWei);", "reserveBudget(day, worst, this.#caps.dailyBudgetWei * 100n);", "raise the daily QIE budget a hundredfold", [FS]),
+  m("R04", RELAYER, "if (used * 2n >= budget) await this.raise(\"budget_50\"", "if (used >= budget) await this.raise(\"budget_50\"", "raise the half-budget alert only when the budget is gone", [FS]),
   m("R05", RELAYER, "valueWei <= 0n || valueWei > this.#caps.maxTopUpWei", "valueWei <= 0n || valueWei > this.#caps.maxTopUpWei * 100n", "raise the top-up cap", [FS]),
   m("R06", RELAYER, "if (this.#allow.has(dest) || dest === this.address) throw", "if (false) throw", "allow a top-up to a contract on the allowlist or to itself", [FS]),
   m("R07", RELAYER, "if (price > this.#caps.maxGasPriceWei) {", "if (price > this.#caps.maxGasPriceWei * 100n) {", "pay any gas price", [FS]),
@@ -81,9 +81,9 @@ export const MUTATIONS: Mutation[] = [
   m("X10", PROXY, "    if (getAddress(o.signer.address) === getAddress(o.config.payer)) {", "    if (false) {", "start with the owner's own key", [PX]),
 
   // paidTool: idempotency and charging
-  m("S01", PAID, "      if (prior && prior.argsHash !== argsHash) {", "      if (false) {", "let a used intent pay for a different call", [PT]),
+  m("S01", PAID, 'if (prior && prior.state !== "held" && prior.argsHash !== argsHash) {', "if (false) {", "let a used intent pay for a different call", [PT]),
   m("S02", PAID, "        if (running.argsHash !== argsHash) {", "        if (false) {", "let an intent in flight pay for a different call", [PT]),
-  m("S03", PAID, "        if (result.isError) {", "        if (false) {", "charge for a tool that returns an error", [PT]),
+  m("S03", PAID, 'if (result.isError) {\n          emit({ type: "tool_failed", tool, id });\n          return result; // a failed call is not charged', 'if (false) {\n          emit({ type: "tool_failed", tool, id });\n          return result; // a failed call is not charged', "charge for a tool that returns an error", [PT]),
   m("S04", PAID, "          if (!verdict.isValid) return required(", "          if (false) return required(", "run the tool whatever the facilitator says", [PT]),
   m("S05", PAID, "      if (!settlement.success) {", "      if (false) {", "treat a declined settlement as paid", [PT]),
 

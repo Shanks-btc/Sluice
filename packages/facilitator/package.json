@@ -6,12 +6,15 @@
   "license": "MIT",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@sluice/sdk": "workspace:*",
+    "@vercel/functions": "3.11.1",
     "ethers": "6.8.1"
   }
 }

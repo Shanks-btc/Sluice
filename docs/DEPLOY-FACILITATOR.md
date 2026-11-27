@@ -12,6 +12,7 @@ The facilitator is one process. It takes signed payments from paid tool servers,
 - [The caps in code](#the-caps-in-code)
 - [Option A: a VPS](#option-a-a-vps)
 - [Option B: Railway](#option-b-railway)
+- [Option C: Vercel](#option-c-vercel)
 - [The kill switch](#the-kill-switch)
 - [Rotating the relayer key](#rotating-the-relayer-key)
 - [Backing up the queue](#backing-up-the-queue)
@@ -85,6 +86,12 @@ Everything comes from the environment. Names are also in [.env.example](../.env.
 | `SLUICE_FACILITATOR_SHUTDOWN_MS` | no | `30000` | How long a shutdown waits for a batch in progress. |
 | `SLUICE_FACILITATOR_RPC_TIMEOUT_MS` | no | `20000` | How long one request to the node may take before the service gives up on it. |
 | `SLUICE_FACILITATOR_LOG_LEVEL` | no | `info` | `debug`, `info`, `warn` or `error`. |
+| `SLUICE_FACILITATOR_SWEEP_SECRET` | **yes** | a random value of 24 or more characters | Vercel only. The scheduled sweeper sends it to `/internal/drain`. The function refuses to start without it. |
+| `SLUICE_REDIS_REST_URL` | no | from the database | Vercel only. The database's https address, if the marketplace integration did not add one. |
+| `SLUICE_REDIS_REST_TOKEN` | **yes** | from the database | Vercel only. The database's token. |
+| `SLUICE_FACILITATOR_SHARED_DATABASE` | no | `one-token-for-both-services` when one database serves both | Vercel only. Without it the function refuses a database that the tool server also uses. Any other value stops the start. |
+
+The last four are for [Option C](#option-c-vercel). On Vercel the function also reads `CRON_SECRET`, which Vercel's own daily cron sends, and it refuses `SLUICE_FACILITATOR_STATE` and `SLUICE_FACILITATOR_KILL_FILE`, because a function has no disk that lasts.
 
 A setting it cannot read stops the start. That is on purpose: a mistyped limit or kill switch must not quietly leave a protection off.
 
@@ -164,9 +171,15 @@ These are Linux commands for a small server you control. Replace the angle-brack
 5. Give the service a domain and use it as `SLUICE_FACILITATOR_URL`.
 6. Run `pnpm live:hostcheck` to check it from outside.
 
+## Option C: Vercel
+
+[HOSTING-VERCEL.md](HOSTING-VERCEL.md#the-facilitator-and-the-tool-server-on-vercel) has the steps. The facilitator runs there as a function with no process that stays on and no disk that lasts, so the queue, the daily counters, the relayer's budget and lock, the stored kill switch and the rate limits are in a Redis database. The tool server may use the same database, if `SLUICE_FACILITATOR_SHARED_DATABASE` says so: both services then hold one token, and a database for each is the stronger setup. A payment is settled in the background of the request that queued it, and `/internal/drain`, called every five minutes by a GitHub workflow and once a day by Vercel's cron, settles what is left. It also offers `/hold` and `/capture`, which the tool server on Vercel uses so that no call is answered before its payment has settled. It was tested here on a local chain against a stand-in for the database, and has not been run on Vercel or Upstash.
+
 ## The kill switch
 
 The kill switch stops everything that sends a transaction or spends QIE: queueing new payments, settling, zero-QIE starts, top-ups and relayed requests. It also makes `/verify` say no, so that a tool server does not do work it cannot be paid for. `/health` and `/status` keep answering.
+
+On Vercel the switch to rely on is `SLUICE_FACILITATOR_KILL_SWITCH=1` with a redeploy, which does not depend on the database; a key in the database is a second, quicker one ([HOSTING-VERCEL.md, Stopping it](HOSTING-VERCEL.md#stopping-it)). On a server of your own:
 
 - To turn it on now, create the file named by `SLUICE_FACILITATOR_KILL_FILE`. In the container above: `docker exec sluice-facilitator sh -c "touch /data/KILL"`.
 - To turn it off, delete the file: `docker exec sluice-facilitator rm /data/KILL`.
@@ -226,5 +239,6 @@ Tick each box yourself, in order. [FOUNDER-LOG.md](FOUNDER-LOG.md) has a copy to
 - The Docker image was not built where this was written, so a build on your machine may need a fix. The build steps (install from the lockfile, compile, copy the production files, start) were each run outside Docker, from a copy of the build context that follows `.dockerignore`.
 - The `SIGTERM` handler was tested by calling the same shutdown function in a test. On Windows a signal ends a process without running a handler, so the signal itself was not sent.
 - The crash tests kill the process with `SIGKILL` on a local chain behind a proxy that drops messages on purpose. A real RPC and a real disk can fail in ways that does not cover.
-- Rate limiting is kept in memory, per process. It stops a flood from one address; it is not a defence against many addresses.
+- Rate limiting is kept in memory, per process (on Vercel, in the database, once for all copies). It stops a flood from one address; it is not a defence against many addresses.
+- The Vercel option has not been run on Vercel or Upstash. Its database was a stand-in that runs the same scripts in a different Lua engine.
 - No outside party has reviewed this service.

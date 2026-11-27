@@ -166,7 +166,7 @@ describe("paidTool: an MCP server that charges per call", function () {
 
     const before = (await s.router.earnings(builder.address)) as bigint;
     await s.facilitator.flush();
-    expect(s.facilitator.status(m.digest)?.status).to.equal("settled");
+    expect((await s.facilitator.status(m.digest))?.status).to.equal("settled");
     expect(((await s.router.earnings(builder.address)) as bigint) - before).to.equal(USDC("0.01") - USDC("0.01") / 100n);
   });
 
@@ -182,7 +182,7 @@ describe("paidTool: an MCP server that charges per call", function () {
     expect(runs.echo, "the tool ran once").to.equal(1);
     expect(s.facilitator.store.size() >= 1).to.equal(true);
     await s.facilitator.flush();
-    const status = s.facilitator.status(m.digest)!;
+    const status = (await s.facilitator.status(m.digest))!;
     expect(status.status).to.equal("settled");
     expect(events.filter((e) => e.type === "settled")).to.have.length(1);
   });
@@ -238,14 +238,14 @@ describe("paidTool: an MCP server that charges per call", function () {
     const failed = await call("flaky", { fail: true }, m.payload);
     expect(failed.isError).to.equal(true);
     expect(settlementOf(failed)).to.equal(undefined);
-    expect(s.facilitator.status(m.digest)).to.equal(undefined); // nothing was queued
+    expect((await s.facilitator.status(m.digest))).to.equal(undefined); // nothing was queued
     // The intent was never used, so retrying with it (and arguments that work) succeeds and is charged once.
     const ok = await call("flaky", { fail: false }, m.payload);
     expect(ok.isError).to.not.equal(true);
     expect(settlementOf(ok)?.success).to.equal(true);
     expect(runs.flaky).to.equal(2);
     await s.facilitator.flush();
-    expect(s.facilitator.status(m.digest)?.status).to.equal("settled");
+    expect((await s.facilitator.status(m.digest))?.status).to.equal("settled");
   });
 
   it("does not charge for a tool that returns an error result, and queues nothing", async () => {
@@ -254,7 +254,7 @@ describe("paidTool: an MCP server that charges per call", function () {
     expect(r.isError).to.equal(true);
     expect(r.content[0]?.text).to.equal("the service said no");
     expect(settlementOf(r)).to.equal(undefined);
-    expect(s.facilitator.status(m.digest)).to.equal(undefined);
+    expect((await s.facilitator.status(m.digest))).to.equal(undefined);
     expect(runs.soft).to.equal(1);
   });
 
@@ -385,5 +385,90 @@ describe("paidTool: concurrent calls against a slow idempotency store", function
     expect(a.content[0]?.text).to.equal("echo:one");
     expect(b.isError).to.equal(true);
     expect(parsePaymentRequired(b)?.error).to.equal(ERRORS.intentReplayed);
+  });
+
+  // A server that answers only once a payment has settled, against facilitators that answer in every other way.
+  type Answer = Awaited<ReturnType<NonNullable<FacilitatorApi["capture"]>>>;
+  const said = (success: boolean, status?: string, over: Partial<Answer> = {}, token?: string): Answer => ({
+    success,
+    transaction: "",
+    network: "eip155:1990",
+    ...(status ? { extensions: { sluice: { id: "id", status, ...(token ? { hold: token } : {}) } } } : {}),
+    ...over,
+  });
+  const holding = (hold: () => Promise<Answer>, capture: () => Promise<Answer>) => {
+    let runs = 0;
+    const facilitator: FacilitatorApi = { ...stub(), hold, capture };
+    const paywall = createPaywall({ facilitator, router: s.routerAddress, asset: s.tokenAddress, now: s.clock, answerOnlyWhenSettled: true });
+    const tool = paywall.paidTool<{ text: string }>({ name: "echo", price: "0.01", payee: builder.address }, async (a) => {
+      runs += 1;
+      return { content: [{ type: "text", text: `secret answer: ${a.text}` }] };
+    });
+    return { tool, runs: () => runs };
+  };
+  const held = async () => said(true, "held", {}, "token");
+
+  it("runs nothing for a facilitator that does not say it holds the payment, with a token", async () => {
+    const answers: Array<() => Promise<Answer>> = [
+      async () => said(true, "queued", {}, "token"),
+      async () => said(true, "held"),
+      async () => said(false, "held", {}, "token"),
+      async () => said(false, undefined, { errorReason: ERRORS.insufficientFunds }),
+      async () => ({ error: "not_found" }) as unknown as Answer,
+      async () => Promise.reject(new Error("unreachable")),
+    ];
+    for (const answer of answers) {
+      const { tool, runs } = holding(answer, async () => said(true, "settled"));
+      const out = await tool({ text: "x" }, { _meta: { [PAYMENT_META_KEY]: await payment() } });
+      expect(out.isError, answer.toString()).to.equal(true);
+      expect(runs(), answer.toString()).to.equal(0);
+    }
+  });
+
+  it("gives the tool's answer for no capture but one that says the payment settled", async () => {
+    const answers: Array<[() => Promise<Answer>, string]> = [
+      [async () => said(true, "queued"), ERRORS.paymentPending],
+      [async () => said(true), ERRORS.paymentPending],
+      [async () => said(false, "submitted", { errorReason: ERRORS.paymentPending }), ERRORS.paymentPending],
+      [async () => Promise.reject(new Error("timed out")), ERRORS.paymentPending],
+      [async () => said(false, "failed", { errorReason: ERRORS.paymentNotTaken }), ERRORS.paymentNotTaken],
+      [async () => ({ error: "not_found" }) as unknown as Answer, ERRORS.unexpectedSettle],
+    ];
+    for (const [answer, code] of answers) {
+      const { tool } = holding(held, answer);
+      const out = await tool({ text: "x" }, { _meta: { [PAYMENT_META_KEY]: await payment() } });
+      expect(out.isError, answer.toString()).to.equal(true);
+      expect(JSON.stringify(out), answer.toString()).to.not.contain("secret answer");
+      expect(JSON.stringify(out), answer.toString()).to.contain(code);
+    }
+  });
+
+  it("answers for a settled capture, once, and again without running or capturing", async () => {
+    let captures = 0;
+    const { tool, runs } = holding(held, async () => (captures++ === 0 ? said(false, "submitted", { errorReason: ERRORS.paymentPending }) : said(true, "settled")));
+    const meta = { _meta: { [PAYMENT_META_KEY]: await payment() } };
+    expect((await tool({ text: "a" }, meta)).isError).to.equal(true);
+    expect((await tool({ text: "b" }, meta)).isError, "a payment that has an answer waiting pays for no other call").to.equal(true);
+    const out = await tool({ text: "a" }, meta);
+    expect(out.content[0]?.text).to.equal("secret answer: a");
+    expect((await tool({ text: "a" }, meta)).content[0]?.text).to.equal("secret answer: a");
+    expect([runs(), captures]).to.deep.equal([1, 2]);
+  });
+
+  it("captures nothing for a call that fails, whether the tool throws or answers with an error", async () => {
+    for (const failing of [
+      async () => ({ isError: true, content: [{ type: "text" as const, text: "no" }] }),
+      async () => Promise.reject(new Error("broke")),
+    ]) {
+      let captures = 0;
+      const facilitator: FacilitatorApi = { ...stub(), hold: held, capture: async () => ((captures += 1), said(true, "settled")) };
+      const tool = createPaywall({ facilitator, router: s.routerAddress, asset: s.tokenAddress, now: s.clock, answerOnlyWhenSettled: true }).paidTool({ name: "echo", price: "0.01", payee: builder.address }, failing);
+      expect((await tool({}, { _meta: { [PAYMENT_META_KEY]: await payment() } })).isError).to.equal(true);
+      expect(captures).to.equal(0);
+    }
+  });
+
+  it("cannot be built to answer only for settled payments with a facilitator that cannot hold one", () => {
+    expect(() => createPaywall({ facilitator: stub(), router: s.routerAddress, asset: s.tokenAddress, answerOnlyWhenSettled: true })).to.throw(/hold and capture/);
   });
 });

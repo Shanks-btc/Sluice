@@ -11,7 +11,8 @@
 // sends no batch, because it could not record what happened. Only a restart, on a store that reads, gets it going again.
 import { closeSync, existsSync, fsyncSync, ftruncateSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
 
-export type Status = "queued" | "submitted" | "settled" | "skipped" | "expired" | "failed";
+/** "held" is written down and counted against the payer, and is not sent until whoever holds it releases it to the queue. */
+export type Status = "held" | "queued" | "submitted" | "settled" | "skipped" | "expired" | "failed";
 
 export type IntentRecord = {
   id: string;
@@ -34,7 +35,14 @@ export type IntentRecord = {
   batch?: string;
   /** The chain's block number when the batch was about to be sent: a restart looks for its events from here. */
   fromBlock?: number;
+  /** How many times the intent could not be submitted. Kept with it, so that a count survives the process. */
+  tries?: number;
+  /** For a held intent: the SHA-256 of the token that releases it. The token itself is given once and never stored. */
+  hold?: string;
 };
+
+/** The states whose amounts count against a payer: not finished, whatever the queue is doing with them. */
+const OPEN: ReadonlySet<Status> = new Set<Status>(["held", "queued", "submitted"]);
 
 /** A counter to raise, by key, in the same write as the records. */
 export type UsageStep = readonly [key: string, amount: bigint];
@@ -44,7 +52,7 @@ export type Usage = { count: number; amount: bigint };
 export class StoreError extends Error {
   constructor(
     message: string,
-    readonly code: "unreadable" | "corrupt" | "write_failed" | "locked" | "closed",
+    readonly code: "unreadable" | "corrupt" | "write_failed" | "locked" | "closed" | "unreachable",
   ) {
     super(message);
     this.name = "StoreError";
@@ -58,16 +66,20 @@ export interface Store {
   /** Writes several records, and raises the counters named, so that they are in the journal together (one write, one flush). */
   putMany(records: IntentRecord[], usage?: readonly UsageStep[]): void;
   queued(limit: number): IntentRecord[];
+  /** Held intents, oldest first: recorded and counted, and not yet released to the queue. */
+  held(limit: number): IntentRecord[];
   /** Records that went into a batch whose outcome the facilitator has not yet recorded. */
   submitted(): IntentRecord[];
-  /** This payer's intents that are queued or submitted: the ones whose amounts may not yet be reflected on the chain. */
+  /** This payer's intents that are held, queued or submitted: the ones whose amounts may not yet be reflected on the chain. */
   openOf(payer: string): IntentRecord[];
-  /** Amount of this payer's intents that are queued or submitted and not yet final. */
+  /** Amount of this payer's intents that are held, queued or submitted and not yet final. */
   pendingFor(payer: string): bigint;
   /** The same, for one (payer, agent) pair, which is what an agent's session budget is spent against. */
   pendingForAgent(payer: string, signer: string): bigint;
   /** The settled intent that was updated last, for /health: when the last batch landed and in which block. */
   latestSettled(): IntentRecord | undefined;
+  /** The highest block in which an intent of this payer's is recorded as settled, or 0. */
+  settledBlock(payer: string): number;
   /** How many intents are in each state, for the private metrics. */
   countByStatus(): Record<Status, number>;
   /** Counters by key, for the per-day caps. */
@@ -116,28 +128,27 @@ export class MemoryStore implements Store {
     for (const r of this.records.values()) if (r.status === status) out.push(r);
     return out;
   }
+  held(limit: number) {
+    return this.byStatus("held").sort((a, b) => a.createdAt - b.createdAt).slice(0, limit);
+  }
   openOf(payer: string) {
     const out: IntentRecord[] = [];
     for (const r of this.records.values()) {
-      if (r.payer.toLowerCase() === payer.toLowerCase() && (r.status === "queued" || r.status === "submitted")) out.push(r);
+      if (r.payer.toLowerCase() === payer.toLowerCase() && OPEN.has(r.status)) out.push(r);
     }
     return out;
   }
   pendingFor(payer: string) {
     let total = 0n;
     for (const r of this.records.values()) {
-      if (r.payer.toLowerCase() === payer.toLowerCase() && (r.status === "queued" || r.status === "submitted")) total += BigInt(r.amount);
+      if (r.payer.toLowerCase() === payer.toLowerCase() && OPEN.has(r.status)) total += BigInt(r.amount);
     }
     return total;
   }
   pendingForAgent(payer: string, signer: string) {
     let total = 0n;
     for (const r of this.records.values()) {
-      if (
-        r.payer.toLowerCase() === payer.toLowerCase() &&
-        r.signer.toLowerCase() === signer.toLowerCase() &&
-        (r.status === "queued" || r.status === "submitted")
-      ) {
+      if (r.payer.toLowerCase() === payer.toLowerCase() && r.signer.toLowerCase() === signer.toLowerCase() && OPEN.has(r.status)) {
         total += BigInt(r.amount);
       }
     }
@@ -150,8 +161,15 @@ export class MemoryStore implements Store {
     }
     return latest;
   }
+  settledBlock(payer: string) {
+    let block = 0;
+    for (const r of this.records.values()) {
+      if (r.status === "settled" && r.payer.toLowerCase() === payer.toLowerCase() && (r.blockNumber ?? 0) > block) block = r.blockNumber as number;
+    }
+    return block;
+  }
   countByStatus() {
-    const counts: Record<Status, number> = { queued: 0, submitted: 0, settled: 0, skipped: 0, expired: 0, failed: 0 };
+    const counts: Record<Status, number> = { held: 0, queued: 0, submitted: 0, settled: 0, skipped: 0, expired: 0, failed: 0 };
     for (const r of this.records.values()) counts[r.status] += 1;
     return counts;
   }

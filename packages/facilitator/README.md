@@ -73,6 +73,23 @@ The store fails closed. A journal that cannot be read, or has a damaged line bef
 disk) makes the store unhealthy for good: the service accepts nothing and sends nothing, and `/health` answers 503. A half-written last
 line, which is what a crash leaves, is cut off. A lock file stops two processes from using one journal.
 
+## As serverless functions
+
+`src/vercel.ts` runs the same service as a function on Vercel, which keeps no process and no disk. What the service records is behind
+one interface (`src/ledger.ts`): the file or memory form above, or Redis (`src/redis-ledger.ts`), where each step that must happen all
+together is a script, one lock with a rising token decides which copy may send, and every change to a payment names that token. A
+payment is settled in the background of the request that queued it, and `/internal/drain`, with a secret, settles what is left. There the
+kill switch is a key in the database or `SLUICE_FACILITATOR_KILL_SWITCH`.
+
+The function also offers `POST /hold` and `POST /capture`, for a tool server that answers only for a settled payment
+([the spec, section 7.4](../../docs/SPEC.md#74-answering-only-for-a-settled-payment-optional)): `/hold` records a payment without
+sending it and returns the token that releases it, and `/capture` releases it, waits up to 20 seconds, and succeeds only once the
+chain shows it settled. A payment it could not send is marked as never to be sent. The service that runs as a process does not offer
+them.
+
+The tests ran this on a local chain against a stand-in for Redis; it has not been run on Vercel or Upstash.
+[Hosting on Vercel](../../docs/HOSTING-VERCEL.md) has the steps.
+
 ## Operating it
 
 - **Kill switch.** `SLUICE_FACILITATOR_KILL_SWITCH=1`, or a file named by `SLUICE_FACILITATOR_KILL_FILE`, stops queueing, settling, top-ups and relayed requests, and makes `/verify` say no. `/health` and `/status` keep answering. The file is checked on every request, so creating it stops the service at once.

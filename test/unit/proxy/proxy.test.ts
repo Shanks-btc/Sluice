@@ -265,7 +265,7 @@ describe("Proxy: paying a paid MCP server", function () {
     const logged = proxy.log.read();
     expect(logged).to.have.length(1);
     expect(logged[0]).to.deep.include({ event: "paid", tool: "echo", payee: builder.address, amount: "0.010000", status: "queued" });
-    expect(s.facilitator.status(logged[0]!.id!)?.status).to.equal("settled");
+    expect((await s.facilitator.status(logged[0]!.id!))?.status).to.equal("settled");
     expect(proxy.policy.spentUnits).to.equal(USDC("0.01"));
     expect(JSON.parse(readFileSync(config.stateFile, "utf8"))).to.deep.equal({ spent: "10000", count: 1 });
     expect(readFileSync(config.logFile, "utf8")).to.not.match(/signature|0x[0-9a-f]{130}/i);

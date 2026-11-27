@@ -2,8 +2,14 @@
 //
 // A fixed window per key (an IP address, a payer address). It lives in memory: a restart starts the counts again, which is fine for
 // a limit whose job is to stop a flood, and is why the caps that guard QIE and QUSDC (caps.ts) are kept in the journal instead.
+// A service that runs as many short-lived copies keeps the counts in its database instead (RedisRateLimiter in redis.ts).
 
 export type LimitResult = { ok: true } | { ok: false; retryAfterSeconds: number };
+
+/** What a server asks before it serves a caller: this one in memory, or one that every copy of the server shares. */
+export interface Limiter {
+  hit(key: string): LimitResult | Promise<LimitResult>;
+}
 
 export class RateLimiter {
   private readonly windows = new Map<string, { start: number; count: number }>();

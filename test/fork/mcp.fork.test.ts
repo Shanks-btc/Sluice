@@ -188,7 +188,7 @@ describe("Fork: the MCP payment layer with the real QUSDC", function () {
   it("keeps the relayer inside its caps while doing all of this, and reports no alert it should not", async () => {
     const health = await s.facilitator.health();
     expect(health.relayerQusdcUnits).to.equal("0");
-    const b = s.facilitator.relayer.budget();
+    const b = (await s.facilitator.relayer.budget());
     expect(b.spentWei > 0n).to.equal(true);
     expect(b.spentWei + b.reservedWei <= b.budgetWei).to.equal(true);
     expect(s.facilitator.relayer.alerts).to.deep.equal([]); // well under half of the day's budget

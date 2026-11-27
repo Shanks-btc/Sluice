@@ -8,6 +8,52 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 
 export type McpFactory = () => Promise<McpServer> | McpServer;
 
+export class BodyTooLarge extends Error {}
+export class BodyNotJson extends Error {}
+
+/**
+ * The JSON of a request's body, size-limited, whether it is still to be read or a host has read it already (a serverless platform may hand
+ * a function the body as `req.body`, parsed or not). Throws BodyTooLarge or BodyNotJson.
+ */
+export async function readJsonBody(req: IncomingMessage, maxBytes: number): Promise<unknown> {
+  let given: unknown;
+  try {
+    given = (req as IncomingMessage & { body?: unknown }).body; // a host's parser may run, and fail, at the moment this is read
+  } catch {
+    throw new BodyNotJson("the body is not JSON");
+  }
+  const parse = (text: string): unknown => {
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new BodyNotJson("the body is not JSON");
+    }
+  };
+  if (given !== undefined) {
+    const text = Buffer.isBuffer(given) ? given.toString("utf8") : typeof given === "string" ? given : (JSON.stringify(given) ?? "");
+    if (Buffer.byteLength(text, "utf8") > maxBytes) throw new BodyTooLarge("the body is too large");
+    return Buffer.isBuffer(given) || typeof given === "string" ? parse(text) : given;
+  }
+  // Read by someone else, who handed nothing on: waiting for it would wait for ever.
+  if (req.readableEnded) throw new BodyNotJson("the body is not JSON");
+  const text = await new Promise<string>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new BodyTooLarge("the body is too large"));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    req.on("error", () => reject(new BodyNotJson("the request failed")));
+  });
+  return parse(text);
+}
+
 /**
  * A request listener for POST /mcp. Any other method or path is refused. A host that has already read the request's body (to count
  * it, size-limit it, or tell a paid call from an unpaid one) passes the parsed JSON as the third argument, and the transport uses

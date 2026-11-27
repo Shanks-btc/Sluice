@@ -21,23 +21,35 @@ const LIVE = "test/unit/live-tools.test.ts";
 const GUARDS = "test/unit/mainnet-guards.test.ts";
 const TOOLS = "test/unit/mainnet-tools.test.ts";
 
+const LEDGER = "test/unit/facilitator/ledger.test.ts";
+const CONC = "test/unit/facilitator/serverless-concurrency.test.ts";
+const HAND = "test/unit/facilitator/serverless-handlers.test.ts";
+const UNPAID = "test/unit/facilitator/unpaid.test.ts";
+const PT = "test/unit/sdk/paid-tool.test.ts";
+const SHARED = "test/unit/facilitator/shared-database.test.ts";
+const GUARD = "packages/sdk/src/redis-guard.ts";
+const TOOLS_FILE = "examples/paid-tools/src/vercel.ts";
+
 const F = "packages/facilitator/src";
+const REDIS = `${F}/redis-ledger.ts`;
+const LOCAL = `${F}/ledger.ts`;
+const PAID = "packages/sdk/src/paid-tool.ts";
 const m = (id: string, file: string, find: string, replace: string, why: string, tests: string[]): Mutation => ({ id, file, find, replace, why, tests });
 
 export const LIVE_MUTATIONS: Mutation[] = [
   // The kill switch, the store gate and the order of a batch's life
-  m("G01", `${F}/service.ts`, "if (this.killSwitch.active()) {", "if (false) {", "ignore the kill switch", [OPS]),
-  m("G02", `${F}/service.ts`, "if (!this.store.healthy()) {", "if (false) {", "carry on when the queue store cannot be written", [DUR]),
-  m("G03", `${F}/service.ts`, "if (blocked) return { isValid: false, invalidReason: blocked, payer };", "if (false) return { isValid: false, invalidReason: blocked, payer };", "say a payment is valid while the facilitator cannot settle it", [OPS, DUR]),
-  m("G04", `${F}/service.ts`, "this.store.putMany(current); // before the transaction exists. If this write fails, nothing is sent.", "// not written", "send a batch without writing it down as submitted first", [DUR]),
-  m("G05", `${F}/service.ts`, "this.store.putMany(current); // the hash, as soon as the node has it", "// not written", "not write the transaction hash down when the node has it", [CRASH]),
+  m("G01", `${F}/service.ts`, "if (this.killSwitch.active()) return this.stopped();", "if (false) return this.stopped();", "ignore the kill switch", [OPS]),
+  m("G02", `${F}/service.ts`, "if (!(await this.ledger.health()).ok) return this.unrecordable();", "if (false) return this.unrecordable();", "carry on when the queue store cannot be written", [DUR]),
+  m("G03", `${F}/service.ts`, "if (blocked) return invalid(blocked);", "if (false) return invalid(blocked);", "say a payment is valid while the facilitator cannot settle it", [OPS, DUR]),
+  m("G04", `${F}/service.ts`, "await this.ledger.update(current, lock); // before the transaction exists. If this write fails, nothing is sent.", "// not written", "send a batch without writing it down as submitted first", [DUR]),
+  m("G05", `${F}/service.ts`, "await this.ledger.update(current, lock); // the hash, as soon as the node has it", "// not written", "not write the transaction hash down when the node has it", [CRASH]),
   m("G06", `${F}/service.ts`, "if (counted.has(r.id)) continue;", "if (false) continue;", "count a payment twice once its batch is mined", [DUR]),
   m("G07", `${F}/service.ts`, "if (await relayerBusy()) {", "if (false) {", "send a batch again while the first is still waiting", [DUR]),
   m("G08", `${F}/service.ts`, "        if (used) {\n          // 3", "        if (false) {\n          // 3", "send a batch again when the chain shows it was mined", [DUR, CRASH]),
 
   // The caps on the relayer's own QIE
-  m("G09", `${F}/service.ts`, "if (this.store.usage(topUpKey).amount + topUp > this.caps.topUpPerAddressDailyWei) {", "if (false) {", "top up one address past its daily cap", [OPS]),
-  m("G10", `${F}/relayer.ts`, "if (sent + valueWei > this.#caps.topUpPerAddressDailyWei) {", "if (false) {", "let the relayer send one address more than its daily cap", [OPS]),
+  m("G09", `${F}/service.ts`, "{ key: topUpKey, amount: topUp, maxAmount: this.caps.topUpPerAddressDailyWei },", "{ key: topUpKey, amount: topUp },", "top up one address past its daily cap", [OPS]),
+  m("G10", `${F}/relayer.ts`, "if (!(await this.#ledger.reserveTopUp(day, dest, valueWei, this.#caps.topUpPerAddressDailyWei))) {", "if (false) {", "let the relayer send one address more than its daily cap", [OPS]),
   m("G11", `${F}/caps.ts`, "if (value > ceiling) throw new CapConfigError(", "if (false) throw new CapConfigError(", "accept a cap above its hard ceiling", [OPS]),
 
   // The journal
@@ -47,7 +59,7 @@ export const LIVE_MUTATIONS: Mutation[] = [
   m("J04", `${F}/store.ts`, "if (Number.isInteger(holder) && holder > 0 && holder !== pid && isAlive(holder)) {", "if (false) {", "let two processes use one journal", [DUR, OPS]),
 
   // Settings and limits
-  m("S01", `${F}/env.ts`, 'if (network !== "local" && !statePath) {', "if (false) {", "start on mainnet or testnet with a queue held only in memory", [OPS]),
+  m("S01", `${F}/env.ts`, 'if (mode === "server" && network !== "local" && !statePath) {', "if (false) {", "start on mainnet or testnet with a queue held only in memory", [OPS]),
   m("S02", `${F}/env.ts`, "throw new EnvError(`refusing to start: ${name} must be 1 or 0`);", "return false;", "leave the kill switch off when its setting is mistyped", [OPS]),
   m("S03", `${F}/server.ts`, "if (!byPayer.ok) return limited(", "if (false) return limited(", "not limit requests that name one payer", [OPS]),
   m("S04", "packages/sdk/src/ratelimit.ts", "if (trustedHops <= 0) return socket;", "if (false) return socket;", "believe X-Forwarded-For with no proxy configured", [OPS]),
@@ -111,6 +123,88 @@ export const LIVE_MUTATIONS: Mutation[] = [
   m("P41", "scripts/evidence-check.ts", "if (fork && !fileArg) {", "if (false) {", "check fork rows against docs/EVIDENCE.md", [GUARDS]),
   m("P42", "scripts/evidence-check.ts", "if (fork && fileArg && resolve(fileArg) === resolve(realPath)) {", "if (false) {", "read fork rows from docs/EVIDENCE.md itself", [GUARDS]),
   m("P43", "scripts/evidence-summary.ts", "if (fork && fileIndex < 0) {", "if (false) {", "count a fork run without a copy of the evidence file", [GUARDS]),
+
+  // The guards of the services as serverless functions: the lock on the relayer and the fence it gives
+  m("V01", REDIS, "if redis.call('EXISTS', KEYS[1]) == 1 then return false end", "if false then return false end", "give the relayer's lock to a second holder", [LEDGER]),
+  m("V02", LOCAL, "if (current && current.expires > this.now()) return undefined;", "if (false) return undefined;", "give the lock of one process to a second holder", [LEDGER]),
+  m("V03", `${F}/relayer.ts`, "await lock.release().catch(() => undefined);", "", "keep the relayer's lock after the work is done", [CONC]),
+  m("V04", `${F}/vercel.ts`, "export const LOCK_TTL_MS = (MAX_DURATION_SECONDS + 30) * 1000;", "export const LOCK_TTL_MS = (MAX_DURATION_SECONDS - 30) * 1000;", "let the lock die while the function that holds it may still run", [HAND]),
+  m("V05", REDIS, "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return { 'stale' } end", "if false then return { 'stale' } end", "accept a write from a holder that lost the lock", [LEDGER, CONC]),
+  m("V06", REDIS, "local token = tostring(redis.call('INCR', KEYS[2]))", "local token = '1'", "give every holder of the lock the same fence token", [LEDGER]),
+  m("V07", LOCAL, "if (!this.holds(RELAYER_LOCK, fence.token)) throw new StaleLockError();", "if (false) throw new StaleLockError();", "accept a stale writer in one process", [LEDGER]),
+  m("V08", REDIS, "if final[old] and old ~= ARGV[at + 2] then return { 'final', old, ARGV[at + 2] } end", "if false then return { 'final', old, ARGV[at + 2] } end", "move a finished payment out of its final state", [LEDGER]),
+
+  // The check made at the moment of signing
+  m("V09", `${F}/relayer.ts`, 'if (!(await lock.held(LOCK_MARGIN_MS))) throw new CapError("lock_lost", "the relayer lock was lost, so nothing was signed");', "", "sign without looking whether the lock is still held", [CONC]),
+  m("V10", `${F}/relayer.ts`, "lock.held(LOCK_MARGIN_MS)", "lock.held(0)", "sign with a lock that is about to die", [CONC]),
+  m("V11", `${F}/relayer.ts`, 'if (this.#maySend && !(await this.#maySend())) throw new CapError(ERRORS.killSwitch, "the operator has stopped all sends");', "", "sign without asking the kill switches again", [CONC]),
+
+  // The two kill switches
+  m("V12", `${F}/service.ts`, "if (storedSwitch) return this.stopped();", "if (false) return this.stopped();", "accept payments while the stored switch is on", [CONC]),
+  m("V13", `${F}/service.ts`, "return !(await this.ledger.killSwitchOn());", "return true;", "send while the stored switch is on", [CONC]),
+  m("V14", `${F}/service.ts`, "      return !(await this.ledger.killSwitchOn());\n    } catch {\n      return false;", "      return !(await this.ledger.killSwitchOn());\n    } catch {\n      return true;", "send while the stored switch cannot be read", [CONC]),
+  m("V15", `${F}/service.ts`, "if (this.killSwitch.active()) return false;", "if (false) return false;", "send while the environment's switch is on", [CONC]),
+  m("V16", REDIS, 'return value !== null && value !== undefined && String(value) !== "0";', 'return String(value) === "1";', "read a stored switch set to anything but 1 as off", [LEDGER]),
+
+  // The caps, in the database
+  m("V17", REDIS, "if (maxCount >= 0 and count + 1 > maxCount) or (maxAmount >= 0 and amount + tonumber(ARGV[at + 1]) > maxAmount) then", "if (maxAmount >= 0 and amount + tonumber(ARGV[at + 1]) > maxAmount) then", "queue past a daily count limit", [LEDGER]),
+  m("V18", REDIS, "if (maxCount >= 0 and count + 1 > maxCount) or (maxAmount >= 0 and amount + tonumber(ARGV[at + 1]) > maxAmount) then", "if (maxCount >= 0 and count + 1 > maxCount) then", "queue past a daily amount limit", [LEDGER]),
+  m("V19", REDIS, "if (maxCount >= 0 and count + 1 > maxCount) or (maxAmount >= 0 and amount + tonumber(ARGV[at]) > maxAmount) then return i - 1 end", "if false then return i - 1 end", "start and relay past the daily counters", [LEDGER, CONC]),
+  m("V20", REDIS, "if spent + reserved + tonumber(ARGV[1]) > tonumber(ARGV[2]) then return { 0, spent, reserved } end", "if false then return { 0, spent, reserved } end", "spend past the relayer's daily budget", [LEDGER, CONC]),
+  m("V21", REDIS, "const up = (wei: bigint): bigint => (wei + GWEI - 1n) / GWEI;", "const up = (wei: bigint): bigint => wei / GWEI;", "round the relayer's spending down", [LEDGER]),
+  m("V22", `${F}/service.ts`, "const block = Math.max(await this.provider.getBlockNumber(), floor);", "const block = await this.provider.getBlockNumber();", "count a settled payment's money as free again at an old block", [CONC]),
+
+  // One payment, one run: the claim a copy of a tool server makes before it runs anything
+  m("V23", PAID, "if (!claimed) {", "if (false) {", "run a tool for a payment another copy has claimed", [HAND]),
+  m("V24", PAID, 'return errorResult(ERRORS.facilitatorUnavailable, "the server cannot record what a payment is used for, so it runs nothing; send the same payment again later");', "claimed = true;", "run a tool when the claim cannot be made", [HAND]),
+  m("V25", "packages/sdk/src/redis-idempotency.ts", '"NX", "PX", this.claimMs', '"PX", this.claimMs', "let every copy claim the same payment", [HAND]),
+  m("V26", "packages/sdk/src/redis.ts", "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end", "if true then return redis.call('DEL', KEYS[1]) end", "let a copy give up another's claim or lock", [HAND, LEDGER]),
+
+  // Held before the tool runs, answered only once settled
+  m("V27", "examples/paid-tools/src/vercel.ts", "answerOnlyWhenSettled: true,", "answerOnlyWhenSettled: false,", "answer a hosted call before its payment has settled", [UNPAID]),
+  m("V28", PAID, 'if (held.success !== true || sluice?.status !== "held" || !sluice.hold) {', "if (!sluice?.hold) {", "run a tool for a hold the facilitator did not confirm", [PT]),
+  m("V29", PAID, 'if (taken.success === true && taken.extensions?.sluice?.status === "settled") {', "if (taken.success === true) {", "answer for a capture that does not say the payment settled", [PT]),
+  m("V30", `${F}/service.ts`, 'if (existing && (holdHash !== undefined || existing.status === "held")) return already(existing);', "if (false) return already(existing!);", "give a held payment to another asker as queued", [UNPAID]),
+  m("V31", `${F}/service.ts`, "if (!record.hold || !sameHash(keccakText(asked.token), record.hold)) return refuse(ERRORS.intentReplayed);", "if (!record.hold) return refuse(ERRORS.intentReplayed);", "release a held payment for any token", [UNPAID]),
+  m("V32", `${F}/service.ts`, "if (blocked) return refuse(blocked, record); // still held, so nothing is charged", "", "release a held payment while the facilitator is stopped", [UNPAID]),
+  m("V33", `${F}/service.ts`, "if (BigInt(record.deadline) < BigInt(this.now())) return refuse(ERRORS.expired, record);", "", "release a held payment past its deadline", [UNPAID]),
+  m("V34", `${F}/service.ts`, "const cancelled = await this.cancelUnsent(id);", "const cancelled = false;", "leave an unsent payment to be charged after its answer was withheld", [UNPAID]),
+  m("V35", `${F}/service.ts`, 'if (r?.status !== "queued") return false;', "if (!r) return false;", "mark a payment that was sent as never to be sent", [UNPAID]),
+  m("V36", `${F}/service.ts`, 'if (BigInt(r.deadline) < now) expired.push(this.next(r, "expired", { reason: "the deadline passed while the payment was held, and nothing was charged" }));', "", "count a dead held payment against its payer for good", [UNPAID]),
+  m("V37", REDIS, "this.key(record.status), this.key(\"counts\")]", "this.key(\"queued\"), this.key(\"counts\")]", "put a held payment in the queue", [LEDGER]),
+  m("V38", REDIS, "if redis.call('GET', KEYS[2]) ~= 'held' then return 0 end", "if false then return 0 end", "release a payment that is not held", [LEDGER]),
+  m("V39", LOCAL, 'if (this.store.get(record.id)?.status !== "held") return false;', "if (false) return false;", "release a payment that is not held, in one process", [LEDGER]),
+  m("V40", "packages/proxy/src/proxy.ts", "again < PAYMENT_RESENDS && notYet(second)", "again < 0 && notYet(second)", "give up on a pending payment, so that the agent pays again", [UNPAID]),
+  m("V41", PAID, 'if (result.isError) {\n          emit({ type: "tool_failed", tool, id });\n          return result; // nothing releases', 'if (false) {\n          emit({ type: "tool_failed", tool, id });\n          return result; // nothing releases', "charge a held payment for a tool that returns an error", [PT]),
+
+  // One database for both services: the guard on the tool server's side of it
+  m("V42", GUARD, 'throw new RedisRefused("a command this server does not use");', "", "let a tool server run any command, FLUSHALL and SCAN among them", [SHARED]),
+  m("V43", GUARD, "if (!key.startsWith(this.#prefix) || key.length <= this.#prefix.length) throw", "if (false) throw", "let a tool server touch the facilitator's keys", [SHARED]),
+  m("V44", GUARD, "const wanted = this.#scripts.get(script);", "const wanted: number | undefined = this.#scripts.get(script) ?? keys.length;", "let a tool server run any script", [SHARED]),
+  m("V45", GUARD, "if (given.length !== wanted) throw", "if (false) throw", "give a script more keys than it takes", [SHARED]),
+  m("V46", GUARD, "for (const key of given) this.#own(key);", "", "let a script be given the facilitator's keys", [SHARED]),
+  m("V47", GUARD, "if (lasts === undefined || lasts > TOOL_MAX_TTL_MS) throw", "if (lasts !== undefined && lasts > TOOL_MAX_TTL_MS) throw", "let a tool server keep a key for good", [SHARED]),
+  m("V48", GUARD, "if (lasts === undefined || lasts > TOOL_MAX_TTL_MS) throw", "if (lasts === undefined) throw", "let a tool server keep a key longer than a day", [SHARED]),
+  m("V49", GUARD, 'if (Buffer.byteLength(value as string, "utf8") > TOOL_MAX_VALUE_BYTES) throw', "if (false) throw", "let a tool server fill the shared space with one value", [SHARED]),
+  m("V50", GUARD, "if (value !== TOOLS_MARKER_VALUE || options.length !== 0) throw", "if (false) throw", "write anything under the mark's key", [SHARED]),
+  m("V51", GUARD, 'if (typeof value !== "string" && !(typeof value === "number" && Number.isFinite(value))) throw', "if (false) throw", "send an argument that is not what it was checked as", [SHARED]),
+  m("V52", GUARD, "return this.#inner.command(words);", "return this.#inner.command(args);", "send a command the caller can still change after it was checked", [SHARED]),
+  m("V53", GUARD, "return this.#inner.eval(script, given, Array.from(args, word));", "return this.#inner.eval(script, keys, Array.from(args, word));", "send script keys the caller can still change after they were checked", [SHARED]),
+  m("V54", GUARD, 'return (takes === "all" ? given : given.slice(0, 1)).every((a) => /^KEYS\\[[1-9]\\d*\\]$/.test(a));', "return true;", "accept a script that takes a key from its arguments", [SHARED]),
+  m("V55", GUARD, "if (mentions === 0 || calls.length !== mentions) return false;", "if (mentions === 0) return false;", "accept a script that reaches the database under another name", [SHARED]),
+  m("V56", GUARD, "if (!prefix.startsWith(TOOLS_KEY_PREFIX) || prefix.length <= TOOLS_KEY_PREFIX.length || !prefix.endsWith(\":\")) {", "if (false) {", "guard a tool server to the facilitator's prefix", [SHARED]),
+
+  // The tool server's and the facilitator's side of sharing
+  m("V57", TOOLS_FILE, "const client = new ToolServerRedis(options.client ?? new UpstashRest(redis), prefix);", "const client = options.client ?? new UpstashRest(redis);", "give the tool server the database unguarded", [SHARED]),
+  m("V58", TOOLS_FILE, 'await client.command(["SET", TOOLS_MARKER_KEY, TOOLS_MARKER_VALUE]);', "", "use a database without marking it as a tool server's", [SHARED]),
+  m("V59", TOOLS_FILE, "if (marked !== undefined && now() - marked < MARK_EVERY_MS) return;", "if (marked !== undefined) return;", "never mark an emptied database again", [SHARED]),
+  m("V60", `${F}/vercel.ts`, "if (shared) {", "if (shared && false) {", "start on a shared database without being told to", [SHARED]),
+  m("V61", `${F}/vercel.ts`, 'throw new EnvError("refusing to start: whether the database is also used by a tool server could not be read");', "shared = false;", "take a database it cannot read as not shared", [SHARED]),
+  m("V62", REDIS, "else if (await this.sharedWithTools()) return", "else if (false) return", "go on using a database that a tool server started to use", [SHARED]),
+  m("V63", REDIS, "this.acceptShared = options.acceptShared === true;", "this.acceptShared = options.acceptShared !== false;", "accept sharing when told nothing", [SHARED]),
+  m("V64", `${F}/env.ts`, "if (sharing && sharing !== SHARED_DATABASE_ACCEPTED) {", "if (false) {", "take a mistyped acceptance in silence", [SHARED]),
+  m("V65", TOOLS_FILE, "return own.ok ? everywhere.hit(client) : own;", "return everywhere.hit(client);", "ask the shared database about a caller already past the limit", [SHARED]),
+  m("V66", "packages/sdk/src/redis.ts", 'export const FACILITATOR_KEY_PREFIX = "sluice:facilitator:";', 'export const FACILITATOR_KEY_PREFIX = "sluice:tools:facilitator:";', "put the facilitator's keys inside the tool servers' prefix", [SHARED]),
 ];
 
 function main(): number {

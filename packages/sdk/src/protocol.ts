@@ -79,6 +79,8 @@ export const ERRORS = {
   storeUnavailable: "sluice_store_unavailable",
   killSwitch: "sluice_kill_switch",
   rateLimited: "sluice_rate_limited",
+  paymentPending: "sluice_payment_pending",
+  paymentNotTaken: "sluice_payment_not_taken",
   notFound: "sluice_not_found",
   onboardRefused: "sluice_onboard_refused",
   relayRefused: "sluice_relay_refused",
@@ -146,7 +148,8 @@ export type PaymentPayload = {
   extensions?: Record<string, unknown>;
 };
 
-export type SettleExtension = { id: string; status: string; statusUrl?: string };
+/** `hold` is given once, in the answer to /hold: the token that releases the held payment. */
+export type SettleExtension = { id: string; status: string; statusUrl?: string; hold?: string };
 
 export type SettleResponse = {
   success: boolean;

@@ -176,6 +176,8 @@ The kill switch stops everything that spends QIE or sends a transaction: no new 
 
 What users see while it is on: a clear refusal, no charge, and their balance unchanged. They can refund or withdraw from any wallet that holds QIE, with no Sluice service involved.
 
+On Vercel there is no file to touch. The switch to rely on is `SLUICE_FACILITATOR_KILL_SWITCH` with a redeploy, which does not depend on the database. A key in the database, set from its console, is a second, quicker one, and anything holding the database's token can delete it: [HOSTING-VERCEL.md, Stopping it](HOSTING-VERCEL.md#stopping-it). There the queue and the daily counters are in that database too, so the journal below does not exist.
+
 ## Journal backup and restore
 
 The facilitator's journal (`SLUICE_FACILITATOR_STATE`) is the one file that matters: it holds every intent and its state, and the daily counters. It is written as lines that are only ever added, each flushed to disk, and opened with a lock file next to it.

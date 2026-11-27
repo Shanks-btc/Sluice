@@ -1,0 +1,15 @@
+# Kept out of anything uploaded to Vercel from this folder. The projects are meant to be built from the Git repository, which holds
+# none of these; this file is for an upload made from a working folder by mistake.
+*.key
+*.keystore
+*.pem
+.env
+.env.*
+deployment.json
+.local-mainnet
+.rehearsal
+rehearsal-state.json
+testnet-token.json
+evidence-draft.json
+*.jsonl
+node_modules

@@ -160,12 +160,12 @@ describe("Facilitator: settle, flush and status", function () {
     const queued = await s.facilitator.settle(verifyBody(m));
     expect(queued).to.deep.include({ success: true, payer: payer.address, transaction: "", network: "eip155:1990", amount: price.toString() });
     expect(queued.extensions?.sluice).to.deep.include({ id: m.digest, status: "queued" });
-    expect(s.facilitator.status(m.digest)?.status).to.equal("queued");
+    expect((await s.facilitator.status(m.digest))?.status).to.equal("queued");
     expect(await s.router.earnings(builder)).to.equal(0n); // nothing on chain yet
 
     const report = await s.facilitator.flush();
     expect(report).to.include({ submitted: 1, settled: 1, skipped: 0, failed: 0 });
-    const done = s.facilitator.status(m.digest)!;
+    const done = (await s.facilitator.status(m.digest))!;
     expect(done.status).to.equal("settled");
     expect(done.transaction).to.match(/^0x[0-9a-f]{64}$/);
     expect(await s.router.earnings(builder)).to.equal(price - price / 100n);
@@ -219,7 +219,7 @@ describe("Facilitator: settle, flush and status", function () {
     expect(report.submitted).to.equal(3);
     expect(report.settled).to.equal(2);
     expect(report.skipped).to.equal(1);
-    const statuses = [a, b, c].map((m) => s.facilitator.status(m.digest)!);
+    const statuses = await Promise.all([a, b, c].map(async (m) => (await s.facilitator.status(m.digest))!));
     expect(statuses.filter((x) => x.status === "settled")).to.have.length(2);
     const skipped = statuses.find((x) => x.status === "skipped")!;
     expect(skipped.reason).to.equal("InsufficientBalance");
@@ -232,12 +232,12 @@ describe("Facilitator: settle, flush and status", function () {
     expect((await s.facilitator.settle(verifyBody(m))).success).to.equal(true);
     const later = new LateFlusher(s, 60);
     expect(await later.flushLate()).to.include({ expired: 1, submitted: 0 });
-    expect(s.facilitator.status(m.digest)?.status).to.equal("expired");
+    expect((await s.facilitator.status(m.digest))?.status).to.equal("expired");
     expect(await s.router.earnings(builder)).to.equal(0n);
   });
 
-  it("answers /status for an unknown id with nothing", () => {
-    expect(s.facilitator.status(`0x${"00".repeat(32)}`)).to.equal(undefined);
+  it("answers /status for an unknown id with nothing", async () => {
+    expect((await s.facilitator.status(`0x${"00".repeat(32)}`))).to.equal(undefined);
   });
 
   it("never holds QUSDC, and is neither the owner nor the fee recipient", async () => {
@@ -415,7 +415,7 @@ describe("Facilitator: caps in code", function () {
       await s.facilitator.settle(verifyBody(m));
       const report = await s.facilitator.flush();
       expect(report).to.include({ submitted: 0, held: ERRORS.capGasPrice });
-      expect(s.facilitator.status(m.digest)?.status).to.equal("queued");
+      expect((await s.facilitator.status(m.digest))?.status).to.equal("queued");
     });
 
     it("stops spending when the day's QIE budget is used up, and alerts at half of it", async () => {
@@ -426,7 +426,7 @@ describe("Facilitator: caps in code", function () {
       const make = () => makePayment(s, payer, payer.address, requirementsFor(s, builder, price));
       await s.facilitator.settle(verifyBody(await make()));
       expect(await s.facilitator.flush()).to.include({ settled: 1 });
-      const afterOne = s.facilitator.relayer.budget();
+      const afterOne = (await s.facilitator.relayer.budget());
       expect(afterOne.spentWei > 0n).to.equal(true);
       const firedInFlush: Record<string, number> = {};
       for (let i = 0; i < 40 && !alerts.includes("budget_exhausted"); i++) {
@@ -446,7 +446,7 @@ describe("Facilitator: caps in code", function () {
       expect(alerts).to.include("budget_50");
       expect(alerts).to.include("budget_exhausted");
       expect(alerts.indexOf("budget_50")).to.be.lessThan(alerts.indexOf("budget_exhausted"));
-      const b = s.facilitator.relayer.budget();
+      const b = (await s.facilitator.relayer.budget());
       expect(b.spentWei + b.reservedWei <= b.budgetWei).to.equal(true);
     });
 

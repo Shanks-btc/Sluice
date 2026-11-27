@@ -5,6 +5,8 @@
 // (SLUICE_MAX_QIE, which becomes the relayer's daily budget and may not exceed the relayer's hard ceiling).
 // Against a local node (SLUICE_NETWORK=local, an http://127.0.0.1 RPC) no approval is needed, since nothing real
 // can be spent there.
+import { RedisError, readRedisCredentials } from "@sluice/sdk";
+import type { RedisCredentials } from "@sluice/sdk";
 import { DEFAULT_CAPS, HARD_CAPS, resolveCaps } from "./caps";
 import type { Caps } from "./caps";
 
@@ -27,6 +29,12 @@ export type FacilitatorEnv = {
   caps: Caps;
   /** Where the queue's journal lives. Required on mainnet and testnet: a queue kept only in memory is lost by a restart. */
   statePath?: string;
+  /** Serverless only: the database that holds the queue, the caps, the relayer lock and the stored kill switch. */
+  redis?: RedisCredentials;
+  /** Serverless only: a database that a tool server also uses is used all the same (SLUICE_FACILITATOR_SHARED_DATABASE). */
+  acceptSharedDatabase: boolean;
+  /** Serverless only: the bearer tokens the drain endpoint accepts, the sweeper's and, if set, the platform's cron secret. Never printed. */
+  drainSecrets: () => string[];
   publicUrl?: string;
   /** Browser origins allowed to call the facilitator. Empty unless SLUICE_FACILITATOR_CORS_ORIGINS names some. */
   corsOrigins: string[];
@@ -129,7 +137,17 @@ function whole(name: string, text: string | undefined, fallback: number, min: nu
 
 const HOST = /^(\d{1,3}(\.\d{1,3}){3}|localhost|[a-z0-9.-]+)$/i;
 
-export function readEnv(env: Env): FacilitatorEnv {
+/**
+ * "server" is a process that runs on: it keeps its queue in a file. "serverless" is a function that runs for one request at a time, on a
+ * disk that does not last: it keeps everything in a database, and has no timer, so something has to ask it to drain its queue.
+ */
+export type RunMode = "server" | "serverless";
+
+const SECRET = /^[A-Za-z0-9._~+/=-]{24,200}$/;
+/** What SLUICE_FACILITATOR_SHARED_DATABASE must say, word for word: nothing short, so that it is not set without being read. */
+export const SHARED_DATABASE_ACCEPTED = "one-token-for-both-services";
+
+export function readEnv(env: Env, mode: RunMode = "server"): FacilitatorEnv {
   const network = env.SLUICE_NETWORK?.trim();
   if (network !== "mainnet" && network !== "testnet" && network !== "local") {
     throw new EnvError("refusing to start: set SLUICE_NETWORK to mainnet, testnet or local");
@@ -155,8 +173,31 @@ export function readEnv(env: Env): FacilitatorEnv {
   if (!key || !/^0x[0-9a-fA-F]{64}$/.test(key)) throw new EnvError("refusing to start: SLUICE_RELAYER_KEY must be a 0x-prefixed 32-byte hex key");
 
   const statePath = env.SLUICE_FACILITATOR_STATE?.trim() || undefined;
-  if (network !== "local" && !statePath) {
+  if (mode === "server" && network !== "local" && !statePath) {
     throw new EnvError(`refusing to start on ${network}: set SLUICE_FACILITATOR_STATE to a file on a disk that survives restarts, because a queue kept only in memory is lost when the process stops`);
+  }
+  let redis: RedisCredentials | undefined;
+  let drainSecrets: string[] = [];
+  let acceptSharedDatabase = false;
+  if (mode === "serverless") {
+    const sharing = env.SLUICE_FACILITATOR_SHARED_DATABASE?.trim();
+    if (sharing && sharing !== SHARED_DATABASE_ACCEPTED) {
+      throw new EnvError(`refusing to start: SLUICE_FACILITATOR_SHARED_DATABASE is either left out or exactly ${SHARED_DATABASE_ACCEPTED}`);
+    }
+    acceptSharedDatabase = sharing === SHARED_DATABASE_ACCEPTED;
+    if (statePath) throw new EnvError("refusing to start: a serverless function has no disk that lasts, so remove SLUICE_FACILITATOR_STATE; the queue is kept in the database");
+    if (env.SLUICE_FACILITATOR_KILL_FILE?.trim()) throw new EnvError("refusing to start: a serverless function reads no kill file, so remove SLUICE_FACILITATOR_KILL_FILE; use SLUICE_FACILITATOR_KILL_SWITCH, or the switch in the database");
+    try {
+      redis = readRedisCredentials(env);
+    } catch (err) {
+      throw new EnvError(`refusing to start: ${err instanceof RedisError ? err.message : "the database's settings could not be read"}`);
+    }
+    if (!redis) throw new EnvError("refusing to start: set SLUICE_REDIS_REST_URL and SLUICE_REDIS_REST_TOKEN (or add the database through the marketplace)");
+    const sweep = env.SLUICE_FACILITATOR_SWEEP_SECRET?.trim();
+    if (!sweep || !SECRET.test(sweep)) throw new EnvError("refusing to start: SLUICE_FACILITATOR_SWEEP_SECRET must be 24 to 200 characters of letters, digits and . _ ~ + / = -");
+    const cron = env.CRON_SECRET?.trim();
+    if (cron !== undefined && cron !== "" && !SECRET.test(cron)) throw new EnvError("refusing to start: CRON_SECRET must be 24 to 200 characters of letters, digits and . _ ~ + / = -");
+    drainSecrets = cron ? [sweep, cron] : [sweep];
   }
 
   const requested: Partial<Caps> = {};
@@ -206,6 +247,9 @@ export function readEnv(env: Env): FacilitatorEnv {
     port,
     caps,
     statePath,
+    redis,
+    acceptSharedDatabase,
+    drainSecrets: () => [...drainSecrets],
     publicUrl: env.SLUICE_FACILITATOR_URL?.trim() || undefined,
     corsOrigins: parseCorsOrigins(env.SLUICE_FACILITATOR_CORS_ORIGINS),
     host,
@@ -214,7 +258,8 @@ export function readEnv(env: Env): FacilitatorEnv {
     maxBodyBytes: whole("SLUICE_FACILITATOR_MAX_BODY_BYTES", env.SLUICE_FACILITATOR_MAX_BODY_BYTES, 64 * 1024, 1024, 1024 * 1024),
     ipPerMinute: whole("SLUICE_FACILITATOR_RATE_LIMIT_IP", env.SLUICE_FACILITATOR_RATE_LIMIT_IP, 240, 1, 100_000),
     payerPerMinute: whole("SLUICE_FACILITATOR_RATE_LIMIT_PAYER", env.SLUICE_FACILITATOR_RATE_LIMIT_PAYER, 60, 1, 100_000),
-    trustedProxyHops: whole("SLUICE_FACILITATOR_TRUST_PROXY_HOPS", env.SLUICE_FACILITATOR_TRUST_PROXY_HOPS, 0, 0, 5),
+    // Behind the serverless platform's own proxy, which writes the caller's address, unless the setting says otherwise.
+    trustedProxyHops: whole("SLUICE_FACILITATOR_TRUST_PROXY_HOPS", env.SLUICE_FACILITATOR_TRUST_PROXY_HOPS, mode === "serverless" ? 1 : 0, 0, 5),
     lowBalanceWei: lowBalance ? qieToWei(lowBalance, "SLUICE_FACILITATOR_LOW_BALANCE_QIE") : undefined,
     shutdownMs: whole("SLUICE_FACILITATOR_SHUTDOWN_MS", env.SLUICE_FACILITATOR_SHUTDOWN_MS, 30_000, 1_000, 300_000),
     flushMs: whole("SLUICE_FACILITATOR_FLUSH_MS", env.SLUICE_FACILITATOR_FLUSH_MS, 15_000, 250, 600_000),
@@ -223,5 +268,6 @@ export function readEnv(env: Env): FacilitatorEnv {
   };
   Object.defineProperty(out, "relayerKey", { enumerable: false, value: out.relayerKey });
   Object.defineProperty(out, "metricsToken", { enumerable: false, value: out.metricsToken });
+  Object.defineProperty(out, "drainSecrets", { enumerable: false, value: out.drainSecrets });
   return out;
 }

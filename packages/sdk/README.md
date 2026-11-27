@@ -45,6 +45,12 @@ The same intent never charges twice or runs a tool twice: a repeat of the same c
 intent on a different call is refused. Pass a `store` to `createPaywall` to keep that record across restarts. The default
 lives in memory.
 
+A queued payment that cannot be sent in time expires, after the tool has answered. With `answerOnlyWhenSettled: true`, and a
+facilitator that offers `/hold` and `/capture` ([the spec, section 7.4](../../docs/SPEC.md#74-answering-only-for-a-settled-payment-optional)),
+the middleware has the payment held before the tool runs, and returns the result only once the payment has settled on chain. A
+call that fails is not charged. While it cannot tell, it answers `sluice_payment_pending`: the client sends the same payment
+again. The tool server on Vercel is set up this way.
+
 ## What else is in it
 
 | Export | What it is |

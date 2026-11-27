@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "pnpm --filter @sluice/facilitator... run build",
+  "outputDirectory": "public",
+  "functions": {
+    "api/index.js": { "maxDuration": 120 }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }],
+  "crons": [{ "path": "/internal/drain", "schedule": "17 3 * * *" }]
+}

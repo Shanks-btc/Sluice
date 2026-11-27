@@ -83,11 +83,18 @@ export type PaywallConfig = {
   now?: () => number;
   /** Called with a short event name for logging and tests. Never receives a signature. */
   onEvent?: (event: PaywallEvent) => void;
+  /**
+   * For a server whose facilitator may not get a second chance before a payment dies. The facilitator must say that it holds the
+   * payment before the tool runs, and the tool's answer is given only once the chain shows the payment settled. A call that fails is not
+   * charged. Needs a facilitator with `hold` and `capture`. Off unless set.
+   */
+  answerOnlyWhenSettled?: boolean;
 };
 
 export type PaywallEvent =
   | { type: "payment_required"; tool: string; reason?: string }
   | { type: "verified"; tool: string; id: string }
+  | { type: "held"; tool: string; id: string }
   | { type: "executed"; tool: string; id: string }
   | { type: "settled"; tool: string; id: string; status?: string }
   | { type: "replayed"; tool: string; id: string }
@@ -97,15 +104,27 @@ export type PaywallEvent =
 
 export type IdempotencyEntry = {
   argsHash: string;
-  state: "executed" | "settled";
-  result: ToolResult;
+  /** "held": the facilitator holds the payment, and no run of the tool has produced an answer for it yet. */
+  state: "held" | "executed" | "settled";
+  /** The tool's answer. Absent only while "held". */
+  result?: ToolResult;
   settlement?: SettleResponse;
+  /** What releases a held payment: used by a server that answers only once a payment has settled. */
+  hold?: { id: string; token: string };
 };
 
-/** Remembers what each intent was used for. The default lives in memory; a server that restarts can supply its own. */
+/**
+ * Remembers what each intent was used for. The default lives in memory; a server that restarts can supply its own. A server that runs as
+ * several copies at once must supply one they share, with `claim` and `release`, or two copies given one payment at the same moment would
+ * each run the tool (RedisIdempotencyStore is such a store).
+ */
 export interface IdempotencyStore {
   get(id: string): Promise<IdempotencyEntry | undefined>;
   set(id: string, entry: IdempotencyEntry): Promise<void>;
+  /** Takes the intent for one call, across every copy that shares the store: false while another holds it. */
+  claim?(id: string): Promise<boolean>;
+  /** Lets go of an intent this copy claimed. */
+  release?(id: string): Promise<void>;
 }
 
 export class MemoryIdempotencyStore implements IdempotencyStore {
@@ -146,6 +165,9 @@ export class Paywall {
   constructor(private readonly config: PaywallConfig) {
     this.facilitator =
       typeof config.facilitator === "string" ? new FacilitatorClient({ url: config.facilitator }) : config.facilitator;
+    if (config.answerOnlyWhenSettled && (!this.facilitator.hold || !this.facilitator.capture)) {
+      throw new Error("answerOnlyWhenSettled needs a facilitator that can hold and capture a payment");
+    }
     this.store = config.store ?? new MemoryIdempotencyStore();
     this.chainId = config.chainId ?? CHAIN_ID;
     this.asset = getAddress(config.asset ?? QUSDC_ADDRESS);
@@ -239,7 +261,72 @@ export class Paywall {
       const done: IdempotencyEntry = { ...entry, state: "settled", settlement };
       await this.store.set(id, done);
       emit({ type: "settled", tool, id, status: settlement.extensions?.sluice?.status });
-      return withSettlement(entry.result, settlement);
+      return withSettlement(entry.result as ToolResult, settlement);
+    };
+
+    /** The order for a server that answers only once a payment has settled: held, then run, then captured, then answered. */
+    const executeHeld = async (
+      payment: PaymentPayload,
+      id: string,
+      info: PaymentInfo,
+      args: Args,
+      extra: ToolExtra,
+      argsHash: string,
+      prior: IdempotencyEntry | undefined,
+    ): Promise<ToolResult> => {
+      const unknownYet = (): ToolResult =>
+        errorResult(ERRORS.paymentPending, "the payment is not yet known to have settled, so the answer is held back; send the same payment again in a moment, and do not sign a new one");
+      let entry = prior;
+      if (!entry) {
+        let held: SettleResponse;
+        try {
+          held = await this.facilitator.hold!(payment, requirements);
+        } catch (err) {
+          return errorResult(ERRORS.facilitatorUnavailable, `${err instanceof FacilitatorUnavailable ? err.message : "the payment could not be held"}; nothing was run`);
+        }
+        const sluice = held.extensions?.sluice;
+        if (held.success !== true || sluice?.status !== "held" || !sluice.hold) {
+          if (typeof held.errorReason === "string") return required(held.errorReason);
+          return errorResult(ERRORS.facilitatorUnavailable, "the facilitator did not confirm that it holds the payment, so nothing was run");
+        }
+        entry = { argsHash, state: "held", hold: { id: sluice.id, token: sluice.hold } };
+        await this.store.set(id, entry);
+        emit({ type: "held", tool, id });
+      }
+      const hold = entry.hold;
+      if (!hold) return required(ERRORS.intentReplayed);
+      if (entry.state === "held") {
+        let result: ToolResult;
+        try {
+          result = await handler(args, extra, info);
+        } catch (err) {
+          emit({ type: "tool_failed", tool, id });
+          return errorResult("tool_error", err instanceof Error ? err.message : "the tool failed");
+        }
+        if (result.isError) {
+          emit({ type: "tool_failed", tool, id });
+          return result; // nothing releases the payment, so a failed call is not charged
+        }
+        entry = { argsHash, state: "executed", result, hold };
+        await this.store.set(id, entry);
+        emit({ type: "executed", tool, id });
+      }
+      let taken: SettleResponse;
+      try {
+        taken = await this.facilitator.capture!(hold.id, hold.token);
+      } catch {
+        emit({ type: "settle_failed", tool, id, reason: ERRORS.paymentPending });
+        return unknownYet();
+      }
+      if (taken.success === true && taken.extensions?.sluice?.status === "settled") {
+        await this.store.set(id, { ...entry, state: "settled", settlement: taken });
+        emit({ type: "settled", tool, id, status: "settled" });
+        return withSettlement(entry.result as ToolResult, taken);
+      }
+      const reason = taken.success === true ? ERRORS.paymentPending : (taken.errorReason ?? ERRORS.unexpectedSettle);
+      emit({ type: "settle_failed", tool, id, reason });
+      // The answer is withheld either way. "Pending" asks for the same payment again; anything else asks for a new one.
+      return reason === ERRORS.paymentPending ? unknownYet() : required(reason);
     };
 
     return async (args: Args, extra: ToolExtra): Promise<ToolResult> => {
@@ -278,16 +365,19 @@ export class Paywall {
       }
       // The in-flight entry is registered before anything is awaited, store lookup included. A store that is slow (a database)
       // would otherwise leave a gap in which two concurrent calls with one intent both found nothing and both ran the tool.
-      const promise = (async (): Promise<ToolResult> => {
+      const use = async (): Promise<ToolResult> => {
         const prior = await this.store.get(id);
-        if (prior && prior.argsHash !== argsHash) {
+        // A payment that is held and has no answer yet has paid for nothing, so, like one whose call failed, it may be used again.
+        if (prior && prior.state !== "held" && prior.argsHash !== argsHash) {
           emit({ type: "refused_replay", tool, id });
           return required(ERRORS.intentReplayed);
         }
         if (prior?.state === "settled") {
           emit({ type: "replayed", tool, id });
-          return withSettlement(prior.result, prior.settlement as SettleResponse);
+          return withSettlement(prior.result as ToolResult, prior.settlement as SettleResponse);
         }
+        if (this.config.answerOnlyWhenSettled) return executeHeld(payment, id, info, args, extra, argsHash, prior);
+        if (prior?.state === "held") return required(ERRORS.intentReplayed); // written by a server that holds payments: not this one's to finish
         if (!prior) {
           // Only the chain-dependent checks are left: balance, nonce and an agent's session policy.
           let verdict;
@@ -300,6 +390,31 @@ export class Paywall {
           emit({ type: "verified", tool, id });
         }
         return execute(payment, id, info, args, extra, argsHash);
+      };
+      // With a store that several copies share, the intent is claimed before anything about it is read, so that one copy at a time works
+      // with it. A copy that cannot claim it runs nothing.
+      const promise = (async (): Promise<ToolResult> => {
+        if (!this.store.claim) return use();
+        let claimed: boolean;
+        try {
+          claimed = await this.store.claim(id);
+        } catch {
+          return errorResult(ERRORS.facilitatorUnavailable, "the server cannot record what a payment is used for, so it runs nothing; send the same payment again later");
+        }
+        if (!claimed) {
+          const done = await this.store.get(id).catch(() => undefined);
+          if (done?.state === "settled" && done.argsHash === argsHash) {
+            emit({ type: "replayed", tool, id });
+            return withSettlement(done.result as ToolResult, done.settlement as SettleResponse);
+          }
+          emit({ type: "refused_replay", tool, id });
+          return errorResult("payment_in_progress", "another request is using this payment; send the same payment again in a moment");
+        }
+        try {
+          return await use();
+        } finally {
+          await this.store.release?.(id).catch(() => undefined);
+        }
       })();
       this.inflight.set(id, { argsHash, promise });
       try {

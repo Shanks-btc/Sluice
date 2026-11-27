@@ -8,7 +8,7 @@
 import { Interface, Wallet, getAddress, hexlify, randomBytes, verifyTypedData } from "ethers";
 import { expect } from "chai";
 import {
-  ERRORS, PAYMENT_META_KEY, PAYMENT_RESPONSE_META_KEY, PAYMENT_TYPES, SCHEME, X402_VERSION, buildPaymentRequired, buildRequirements, fromWire, intentDigest, paymentRequiredResult,
+  ERRORS, PAYMENT_META_KEY, PAYMENT_RESPONSE_META_KEY, PAYMENT_TYPES, SCHEME, X402_VERSION, buildPaymentRequired, buildRequirements, errorResult, fromWire, intentDigest, paymentRequiredResult,
   resourceFor, routerDomain, toolIdOf, withSettlement,
 } from "@sluice/sdk";
 import { FacilitatorUnavailable, ROUTER_ABI, VAULT_ABI } from "@sluice/sdk";
@@ -89,11 +89,17 @@ type ServerOptions = {
   junk?: boolean;
   tooLarge?: boolean;
   requirements?: Partial<ReturnType<typeof buildRequirements>>;
+  /** How many times a payment is answered "not yet settled" before it is answered. */
+  pending?: number;
+  pendingCode?: string;
+  /** Nothing comes back for a request that carries a payment. */
+  silentPay?: boolean;
 };
 
 /** A tool server that answers like the real one, in memory: a price for a call with no payment, and a result for one that carries a valid signature. */
 function fakeToolServer(options: ServerOptions = {}) {
   const seen: Array<{ method: string; url: string; body?: Record<string, unknown> }> = [];
+  let waiting = options.pending ?? 0;
   const requirements = (tool: string, price: string) => ({
     ...buildRequirements({ toolName: tool, amount: USDC(price), payTo: BUILDER, router: ROUTER, vault: VAULT, chainId: CHAIN, asset: TOKEN }),
     ...options.requirements,
@@ -112,6 +118,11 @@ function fakeToolServer(options: ServerOptions = {}) {
     if (!payment) {
       const result = paymentRequiredResult(buildPaymentRequired(resourceFor(tool), [requirements(tool, options.price ?? "0.01")]));
       return reply(200, { jsonrpc: "2.0", id: 1, result }, { "x-request-id": "req-price-0001" });
+    }
+    if (options.silentPay) throw new TypeError("fetch failed");
+    if (waiting > 0) {
+      waiting -= 1;
+      return reply(200, { jsonrpc: "2.0", id: 2, result: errorResult(options.pendingCode ?? ERRORS.paymentPending, "not yet") }, { "x-request-id": "req-pay-0001" });
     }
     if (options.refuse) {
       const required = buildPaymentRequired(resourceFor(tool), [requirements(tool, options.laterPrice ?? options.price ?? "0.01")], options.refuse);
@@ -619,6 +630,52 @@ describe("Live pages: a paid call", () => {
     const session = new PaidCallSession(plan, dead.deps);
     session.confirm();
     expect(explain(await rejection(session.send())).kind).to.equal("tool_down");
+  });
+
+  /** A payment sent to a server that answers it as `server` says, with the price read from an ordinary one. */
+  const sendTo = async (server: ServerOptions) => {
+    const plan = await planned((await setup()).deps);
+    const other = await setup({ server });
+    const session = new PaidCallSession(plan, { ...other.deps, resendDelayMs: 1 });
+    session.confirm();
+    const sent = () =>
+      other.server.seen
+        .map((s) => (s.body?.params as { _meta?: Record<string, unknown> } | undefined)?._meta?.[PAYMENT_META_KEY] as { payload: { signature: string } } | undefined)
+        .filter((p): p is { payload: { signature: string } } => p !== undefined);
+    return { session, sent };
+  };
+
+  for (const pendingCode of [ERRORS.paymentPending, "payment_in_progress"]) {
+    it(`sends the same signed payment again while the server answers ${pendingCode}, and takes the answer when it comes`, async () => {
+      const { session, sent } = await sendTo({ pending: 3, pendingCode });
+      await session.send();
+      expect(session.state).to.equal("paid");
+      expect(sent()).to.have.length(4);
+      expect(new Set(sent().map((p) => p.payload.signature)).size, "one signature, never a second").to.equal(1);
+    });
+  }
+
+  it("stops after three resends and says the payment may still settle, not that nothing was charged", async () => {
+    const { session, sent } = await sendTo({ pending: 100 });
+    const told = explain(await rejection(session.send()));
+    expect(sent()).to.have.length(4);
+    expect(told.retry).to.equal("no");
+    expect(told.funds).to.contain("may still settle");
+    expect(told.advice).to.contain("Do not sign a new payment");
+  });
+
+  it("says nothing was charged only when the server says the payment was not taken", async () => {
+    const { session, sent } = await sendTo({ refuse: ERRORS.paymentNotTaken });
+    const told = explain(await rejection(session.send()));
+    expect(sent()).to.have.length(1);
+    expect(told.funds).to.contain("not charged");
+  });
+
+  it("does not claim that nothing was charged when no answer comes back for a signed payment", async () => {
+    const { session } = await sendTo({ silentPay: true });
+    const told = explain(await rejection(session.send()));
+    expect(told.kind).to.equal("tool_down");
+    expect(told.funds).to.contain("may have reached it");
   });
 
   it("builds the details panel from the intent that was signed", async () => {

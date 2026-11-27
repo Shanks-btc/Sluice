@@ -76,7 +76,7 @@ describe("Spec compatibility: a client written only from the spec", function () 
     expect(runs).to.equal(1);
 
     expect(await s.facilitator.flush()).to.include({ submitted: 1, settled: 1 });
-    expect(s.facilitator.status(id)).to.deep.include({ status: "settled", payer: payer.address, payee: builder.address, amount: "10000" });
+    expect(await s.facilitator.status(id)).to.deep.include({ status: "settled", payer: payer.address, payee: builder.address, amount: "10000" });
     expect(await s.router.earnings(builder.address)).to.equal(USDC("0.01") - USDC("0.01") / 100n);
     expect(await s.router.payerBalance(payer.address)).to.equal(USDC("5") - USDC("0.01"));
   });

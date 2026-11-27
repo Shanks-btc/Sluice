@@ -102,6 +102,13 @@ function fromCode(code: string): Explained | undefined {
       return E("daily_limit", "The service has reached one of its limits for now.", "Try again later. The limits are there to cap what a fault could cost.", "later", NOTHING_CHARGED);
     case ERRORS.rateLimited:
       return E("rate_limited", "Too many requests came from your connection.", "Wait a minute and try again.", "later", NOTHING_CHARGED);
+    case ERRORS.paymentPending:
+    case "payment_in_progress":
+      return E("unknown", "Your payment is not yet known to have settled, so the answer is held back.", "Do not sign a new payment yet. Look in your activity in a few minutes.", "no", "It may still settle. If it does, you are charged once for it.");
+    case ERRORS.paymentNotTaken:
+      return E("facilitator_down", "The payment could not be settled, so no answer was given.", "Try again in a few minutes, and see the Status page.", "later", NOTHING_CHARGED);
+    case "unconfirmed":
+      return E("tool_down", "The tool server did not answer after you signed.", "Look in your activity before signing again, and see the Status page.", "later", "The payment may have reached it. If it settles, you are charged once for it.");
     case ERRORS.amountTooLow:
     case ERRORS.acceptedMismatch:
     case ERRORS.payeeMismatch:

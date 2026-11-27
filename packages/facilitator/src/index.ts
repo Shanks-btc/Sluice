@@ -1,6 +1,8 @@
 export * from "./caps";
 export * from "./env";
 export * from "./killswitch";
+export * from "./ledger";
+export * from "./redis-ledger";
 export { cutSecrets, createLogger, scrubFields, scrubText, silentLogger } from "@sluice/sdk";
 export type { LogFields, LogLevel, Logger, LoggerOptions } from "@sluice/sdk";
 export { RateLimiter, clientAddress } from "@sluice/sdk";

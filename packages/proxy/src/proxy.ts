@@ -14,6 +14,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { getAddress } from "ethers";
 import {
   DEFAULT_TIMEOUT_SECONDS,
+  ERRORS,
   PAYMENT_META_KEY,
   X402_VERSION,
   Mutex,
@@ -48,10 +49,15 @@ export type ProxyOptions = {
   log?: PaymentLog;
   /** Unix seconds. */
   now?: () => number;
+  /** The wait before the same payment is sent again, while the server says it is not yet known to have settled. Default 4 seconds. */
+  resendDelayMs?: number;
 };
 
 /** The longest a signed intent stays valid, whatever the server offers. */
 const MAX_DEADLINE_SECONDS = 300;
+/** How often the same signed payment is sent again, and the answers that ask for it. */
+const PAYMENT_RESENDS = 3;
+const NOT_YET: ReadonlySet<string> = new Set([ERRORS.paymentPending, "payment_in_progress"]);
 
 export class PaymentProxy {
   readonly policy: BudgetPolicy;
@@ -122,8 +128,14 @@ export class PaymentProxy {
     };
     const amount = formatQusdc(signed.intent.amount);
     let second: ToolResult;
+    const paidParams = { ...params, _meta: { ...(params._meta ?? {}), [PAYMENT_META_KEY]: payload } };
     try {
-      second = (await this.o.upstream.callTool({ ...params, _meta: { ...(params._meta ?? {}), [PAYMENT_META_KEY]: payload } })) as ToolResult;
+      second = (await this.o.upstream.callTool(paidParams)) as ToolResult;
+      // The same signed payment, sent again: nothing new is signed or committed. A new one would risk paying twice.
+      for (let again = 0; again < PAYMENT_RESENDS && notYet(second); again++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, this.o.resendDelayMs ?? 4_000));
+        second = (await this.o.upstream.callTool(paidParams)) as ToolResult;
+      }
     } catch (err) {
       this.log.append({ event: "failed", tool, payee: accepted.payTo, amount, id, reason: "upstream_error", detail: err instanceof Error ? err.message.slice(0, 120) : undefined });
       throw err;
@@ -157,6 +169,12 @@ export class PaymentProxy {
     }
     return undefined;
   }
+}
+
+/** True when the server says it cannot yet tell whether this payment settled. */
+function notYet(result: ToolResult): boolean {
+  const code = (result.structuredContent as { error?: unknown } | undefined)?.error;
+  return result.isError === true && typeof code === "string" && NOT_YET.has(code);
 }
 
 function refusal(code: string, detail: string): ToolResult {

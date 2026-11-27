@@ -12,6 +12,7 @@ The tool server is the example in `examples/paid-tools` served over Streamable H
 - [Limits on callers](#limits-on-callers)
 - [Option A: a VPS](#option-a-a-vps)
 - [Option B: Railway](#option-b-railway)
+- [Option C: Vercel](#option-c-vercel)
 - [Pointing a proxy at it](#pointing-a-proxy-at-it)
 - [After you deploy: a checklist](#after-you-deploy-a-checklist)
 - [What this does not prove](#what-this-does-not-prove)
@@ -50,6 +51,8 @@ Everything comes from the environment. Names are also in [.env.example](../.env.
 
 A setting it cannot read stops the start, so a mistyped limit does not quietly leave a protection off.
 
+On Vercel ([Option C](#option-c-vercel)) it also needs a database: `SLUICE_REDIS_REST_URL`, and `SLUICE_REDIS_REST_TOKEN`, which is a secret, or the pair a marketplace integration adds. It refuses to start without one.
+
 ## When it refuses to start
 
 - `SLUICE_NETWORK` is not `mainnet`, `testnet` or `local`. On mainnet this means it never starts by accident: you have to write the word.
@@ -63,9 +66,9 @@ A setting it cannot read stops the start, so a mistyped limit does not quietly l
 - One request body is read, size-limited and parsed before anything runs. Over the limit is HTTP 413; not JSON is 400.
 - A call that carries a payment in `params._meta["x402/payment"]` is a paid call. Every other request, including `tools/list` and a call with no payment, is unpaid. An address may make `SLUICE_TOOLS_RATE_LIMIT_UNPAID` unpaid requests a minute and `SLUICE_TOOLS_RATE_LIMIT_IP` requests of any kind a minute. Past a limit the answer is HTTP 429 with `Retry-After`.
 - A payment proxy asks without a payment before it pays, so each paid call uses one unpaid request. At the default of 60 a minute, one agent address can make about 58 paid calls a minute. Raise the limit if a busy agent needs more.
-- Reads from the node and the explorer have time limits, and a whole request that runs past 60 seconds is answered with 504.
+- Reads from the node and the explorer have time limits, and a whole request that runs past 60 seconds (45 on Vercel) is answered with 504.
 - Logs are JSON lines on standard error with the method, the tool name, whether it was paid and the status. They hold no signature, no argument and no payment.
-- These limits are in memory, per process, and per address. They slow a flood from one place; they are not a defence against many addresses.
+- These limits are in memory, per process, and per address (on Vercel, in the database, once for all copies). They slow a flood from one place; they are not a defence against many addresses.
 
 ## Option A: a VPS
 
@@ -116,6 +119,12 @@ These are Linux commands for a small server you control. Replace the angle-brack
 4. Give the service a domain. Set `SLUICE_TOOLS_TRUST_PROXY_HOPS` to 1 (HOSTING-RAILWAY.md says why, and what is unverified).
 5. Run `pnpm live:hostcheck` to check it from outside.
 
+## Option C: Vercel
+
+[HOSTING-VERCEL.md](HOSTING-VERCEL.md#the-facilitator-and-the-tool-server-on-vercel) has the steps. The server runs there as a function in its own project. Copies that run at the same moment share, in a Redis database, what each payment was used for and the callers' rate limits, so one payment runs one tool once. When the database cannot be asked, nothing runs. The database may be the facilitator's too: the server then reaches nothing but its own keys, under `sluice:tools:`, through a guard in its code, and marks the database so that the facilitator does not share it without being told. Both services then hold one token, which a database for each avoids.
+
+There it works in another order than on a server of your own, and nothing turns this off: the facilitator holds each payment before the tool runs, and the answer is given only once the payment has settled on chain. So it needs the facilitator of the same repository running on Vercel, which offers `/hold` and `/capture`; with any other it refuses every paid call. It was tested here against a stand-in for the database and has not been run on Vercel or Upstash.
+
 ## Pointing a proxy at it
 
 A payment proxy connects to the tool server's address instead of starting a local process. In the proxy's config file:
@@ -146,5 +155,5 @@ Tick each box yourself, in order. [FOUNDER-LOG.md](FOUNDER-LOG.md) has a copy to
 - The Docker image was not built where this was written, so a build on your machine may need a fix. The build steps (install from the lockfile, compile, copy the production files, start) were each run outside Docker, from a copy of the build context that follows `.dockerignore`.
 - The tool server was tested as its own process behind a proxy and a facilitator that were also their own processes, on a local chain and on a fork of QIE mainnet. It has not been called by a real MCP client such as Claude Code or Cursor.
 - The tools read public data and are not a security review of any token. Their answers say so.
-- Rate limiting is per process and per address, in memory.
+- Rate limiting is per process and per address, in memory (on Vercel, in the database).
 - No outside party has reviewed this service.

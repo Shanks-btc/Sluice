@@ -133,6 +133,12 @@ Read-only queries to `https://rpc1mainnet.qie.digital/` at blocks 11,996,097 to 
 - A hosted facilitator or tool server. They were run as separate processes on a local chain and on a fork, behind a proxy that drops
   messages on purpose and with the process killed (SIGKILL) at three points of a batch's life. Nothing was run on a VPS or on
   Railway, behind a real TLS proxy, or under real traffic. No mainnet row shows a hosted service.
+- The two services as Vercel functions. Nothing was run on Vercel, on Upstash or in GitHub Actions. Copies that run at once
+  were tried on a local chain against a stand-in database that runs the same scripts in Lua 5.3, where Redis runs 5.1. That the
+  platform hands a function the path that was asked for, how long a cold start takes, how Upstash counts a script against its
+  quota, and the platform's time limits in practice are all unknown. [HOSTING-VERCEL.md](HOSTING-VERCEL.md) lists them.
+  The guard that lets the two services share one database was tried against the same stand-in, and its daily command figures
+  were counted there.
 - The `SIGTERM` handler as a signal. A signal ends a process on Windows without running a handler, so the shutdown function was
   called directly and the signal itself was not sent.
 - The explorer's verification, beyond one vault. The tests of `pnpm live:verify` use a stand-in that holds the endpoint's
@@ -168,7 +174,8 @@ Two risks are worth stating plainly.
 - **The server runs the tool before it is paid.** The payer's balance is checked when the call arrives, net of what the
   facilitator has already queued, and settlement happens after the tool runs. A payer who refunds in between leaves the intent
   skipped on chain and the tool run. The window is short and the facilitator narrows it, and it is not closed. A builder who cannot
-  bear that loss should price the tool low.
+  bear that loss should price the tool low. The tool server as it runs on Vercel gives its answer only once the payment has
+  settled, so such a payer gets no answer; the tool has still run.
 - **A signed intent can be submitted by anyone.** It can only pay the builder it names, once, for the amount it names, before
   its deadline. A leaked intent cannot be redirected, and it is a bearer instruction until it is used or expires.
 
@@ -188,5 +195,27 @@ These statements are about `docs/DEPLOY-FACILITATOR.md`, `docs/DEPLOY-TOOL-SERVE
 | Someone floods the facilitator or the tool server | A rate limit per address and per payer, a body size limit and time limits answer 429 or 413, or cut the connection. The limits are in memory and per address, so many addresses are not stopped by them. | `test/unit/facilitator/operations.test.ts`, `test/unit/examples/host.test.ts` |
 | The queue's copy is restored from an old backup | The service settles what it finds against the chain before it takes a request, and the router refuses a payment that already settled, so nothing is taken twice. Two services on two copies would waste gas sending the same batch. | `test/unit/facilitator/durability.test.ts` |
 | A wrongly written evidence row | The recorder refuses a claim the chain does not show, and writes nothing. A row labelled with another network than its table makes the file unreadable. | `test/unit/recorder.test.ts` |
+| On Vercel, two copies of the facilitator try to send at once | One lock with a rising token: the other sends nothing, and a copy that lost the lock can neither sign nor write. The pending nonce is read under the lock. | `test/unit/facilitator/serverless-concurrency.test.ts` |
+| On Vercel, a function is stopped part-way through a batch | The lock expires, and the next drain settles what was in flight from the chain's own record. If it comes after a payment's deadline, a payment that never reached the chain expires, and a server that answered when it queued that payment is not paid for the call. | `test/unit/facilitator/serverless-concurrency.test.ts` |
+| On Vercel, an attempt to settle a call of the hosted tool server fails | The answer is withheld. A payment that was not sent is marked as never to be sent; one that was, or may have been, is finished from the chain, and the same payment then fetches the answer. The tool has run, so the builder may bear its cost unpaid. | `test/unit/facilitator/unpaid.test.ts` |
+| On Vercel, the hosted tool server answers "pending" and the caller signs a new payment | If the earlier payment settles later, the caller has paid twice for one call. The proxy and the web app send the same payment again instead, up to three times; another client must be written to do the same. | `test/unit/facilitator/unpaid.test.ts`, `test/unit/web/live-logic.test.ts` |
+| On Vercel, a tool server that queues with `/settle` and answers at once | It can be left unpaid for a served call after one failed attempt to settle, when the next one comes after the payment's five minutes. | `test/unit/facilitator/unpaid.test.ts` |
+| A session is revoked and the same key authorised again while a signed payment is unexpired | The old payment can settle against the new session, within its limits. The five-minute lifetime the clients sign is what bounds this, which is why it was not lengthened. | `test/unit/facilitator/validity.test.ts` |
+| On Vercel, the database cannot be asked, or refuses commands | Nothing is accepted, sent or served, and a tool server runs no tool. | `test/unit/facilitator/serverless-handlers.test.ts` |
+| On Vercel, the database is lost or emptied | The queue is gone, so its payments go unpaid, the day's counters start again and the stored kill switch is off. Nothing is charged twice, because the router burns a nonce once. Leave eviction off. | `test/unit/PaymentRouter.test.ts` |
+| Something else sends with the relayer key (a second facilitator on another host) | The lock does not cover it, so the two can collide on a nonce. Use a relayer key in one place. | Nothing: it is a rule for whoever hosts it. |
+| One database for both services: a fault in the tool server's code reaches for the facilitator's data | A guard refuses every key outside the tool server's own prefix, every other command and every script but its own two. The guard is in the code: see below. | `test/unit/facilitator/shared-database.test.ts` |
+| One database for both services, and the facilitator was not told | It refuses to start once a tool server has marked the database, and a running copy accepts and sends nothing from then on. | `test/unit/facilitator/shared-database.test.ts` |
+| One database for both services: the tool server's code or a library it loads is compromised, or the token leaks | Not stopped. See below. A database for each is the stronger setup. | Nothing. |
+| One database for both services: a flood on the tool server uses up the month's commands or the space | The database refuses commands, and both services accept, send and serve nothing until it takes them again. A copy of the tool server stops asking the database for a caller it has itself counted past the limit, which slows a flood from one place and does not stop it. | `test/unit/facilitator/shared-database.test.ts` |
+
+**Both services share one token** on the setup that uses one database. The in-code isolation can be bypassed by a bug or a
+compromise in the tool server's code, in a library it loads, or by anyone who gets the token. Whoever does so can read and
+change everything the facilitator keeps: the queued payments and their signatures, the stored kill switch, the daily caps,
+and the counters of the relayer's daily budget and top-ups, which could be reset so that the relayer spends beyond its day's
+budget, up to what it holds. The relayer key is not in the database, and no QUSDC moves except as a payer's own signature
+allows. The setting `SLUICE_FACILITATOR_KILL_SWITCH` does not depend on the database and is the switch to rely on; the key in
+the database is a second one. Separate databases are the stronger setup, to be used once a paid plan exists. Until then, keep
+little QIE on the relayer.
 
 A sluggish facilitator can still cost a tool server a tool run: the server verifies, runs the tool and then settles, as section 8 says.

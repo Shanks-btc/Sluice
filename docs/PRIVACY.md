@@ -34,6 +34,8 @@ When you pay for a tool call, three services take part, each run by the operator
 
 Daily counters per address (for the limits on top-ups and starts) are kept in the same journal.
 
+Where the operator runs the two services as Vercel functions, there is no journal on a disk. The facilitator keeps the same records and counters in a database run by Upstash, with its last 500 refusals, which may name an address. The daily counters expire after a few days; the payment records stay until the operator removes them. The tool server keeps, for two hours, each payment's result, which is the tool's answer, so that the same payment gets the same answer again. It keeps it in the same database or in one of its own, as the operator chose; where there is one, both services hold the token that opens it. Both count requests per network address, and the facilitator per payer address as well, in those databases, for about a minute.
+
 ## What is public
 
 Everything that reaches the chain is public and cannot be deleted: deposits, payments, refunds, withdrawals, agent keys authorised or revoked, and the QIE top-ups the facilitator sends. Anyone can read a wallet's activity from the explorer. The Wallet page reads the same events to show you your own history, and its CSV file is made in your browser and goes nowhere.

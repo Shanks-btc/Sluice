@@ -260,7 +260,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     expect(b.facilitator.store.size()).to.equal(1);
     expect(await b.facilitator.flush()).to.include({ submitted: 1, settled: 1 });
     await earnedOnce();
-    expect(b.facilitator.status(m.digest)?.status).to.equal("settled");
+    expect((await b.facilitator.status(m.digest))?.status).to.equal("settled");
     b.facilitator.store.close();
 
     // Another restart, and the intent sent a third time: still one record, still paid once.
@@ -289,7 +289,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     const first = await a.facilitator.flush();
     expect(first).to.include({ submitted: 0, settled: 0, failed: 0 });
     expect(chaos.sent).to.equal(1);
-    expect(a.facilitator.status(m.digest)?.status).to.equal("queued"); // not lost, and not stuck as submitted
+    expect((await a.facilitator.status(m.digest))?.status).to.equal("queued"); // not lost, and not stuck as submitted
     chaos.mode = "off";
     expect(await a.facilitator.flush()).to.include({ submitted: 1, settled: 1 });
     await earnedOnce();
@@ -303,7 +303,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     await a.facilitator.settle(verifyBody(m));
     const report = await a.facilitator.flush();
     expect(report.settled).to.equal(1); // found from the chain, from its Settled event
-    const done = a.facilitator.status(m.digest)!;
+    const done = (await a.facilitator.status(m.digest))!;
     expect(done.status).to.equal("settled");
     // The transaction hash it records is the one on the chain that emitted the event.
     const logs = await settledEvents(s.router, payer.address);
@@ -332,7 +332,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
 
     // The replacement starts from the same journal and the same relayer key, and settles what it finds from the chain.
     const b = await makeFacilitator(s, { store: new FileStore(t.journal), relayerKey: a.relayerKey });
-    const done = b.facilitator.status(m.digest)!;
+    const done = (await b.facilitator.status(m.digest))!;
     expect(done.status).to.equal("settled");
     expect(done.transaction).to.match(/^0x[0-9a-f]{64}$/);
     expect(await b.facilitator.flush()).to.include({ submitted: 0 });
@@ -353,7 +353,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     void a.facilitator.flush(); // mined, and the process has not yet recorded it
     for (let i = 0; i < 100 && chaos.sent === 0; i++) await new Promise((r) => setTimeout(r, 20));
     await new Promise((r) => setTimeout(r, 200));
-    expect(a.facilitator.status(first.digest)?.status).to.equal("submitted");
+    expect((await a.facilitator.status(first.digest))?.status).to.equal("submitted");
     expect(await s.router.payerBalance(tight.address)).to.equal(USDC("0.01")); // the chain already took it
     // The first call is in the chain's balance, not pending as well: a second call fits, a third does not.
     const second = await call();
@@ -371,7 +371,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     a.facilitator.store.close();
 
     const b = await makeFacilitator(s, { store: new FileStore(t.journal), relayerKey: a.relayerKey });
-    expect(b.facilitator.status(m.digest)?.status).to.equal("queued");
+    expect((await b.facilitator.status(m.digest))?.status).to.equal("queued");
     expect(await b.facilitator.flush()).to.include({ submitted: 1, settled: 1 });
     await earnedOnce();
     b.facilitator.store.close();
@@ -388,7 +388,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     await new Promise((r) => setTimeout(r, 200));
 
     const b = await makeFacilitator(s, { store: new FileStore(t.journal), relayerKey: a.relayerKey });
-    expect(b.facilitator.status(m.digest)?.status).to.equal("submitted"); // waiting, not re-sent
+    expect((await b.facilitator.status(m.digest))?.status).to.equal("submitted"); // waiting, not re-sent
     const waiting = await b.facilitator.flush();
     expect(waiting).to.include({ submitted: 0, settled: 0 });
     expect(await s.provider.send("eth_getTransactionCount", [b.relayerAddress, "pending"])).to.equal("0x1");
@@ -398,7 +398,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     await network.provider.send("evm_setAutomine", [true]);
     await network.provider.send("evm_mine", []);
     expect(await b.facilitator.flush()).to.include({ settled: 1 });
-    expect(b.facilitator.status(m.digest)?.status).to.equal("settled");
+    expect((await b.facilitator.status(m.digest))?.status).to.equal("settled");
     expect(await s.provider.getTransactionCount(b.relayerAddress)).to.equal(1);
     await earnedOnce();
     b.facilitator.store.close();
@@ -417,7 +417,7 @@ describe("Facilitator durability: a stop at any point in a batch's life", functi
     const a = await makeFacilitator(s, { store: new FileStore(t.journal), provider: flaky });
     await a.facilitator.settle(verifyBody(m));
     for (let i = 0; i < 5; i++) expect(await a.facilitator.flush()).to.include({ failed: 0, submitted: 0 });
-    expect(a.facilitator.status(m.digest)?.status).to.equal("queued");
+    expect((await a.facilitator.status(m.digest))?.status).to.equal("queued");
     a.facilitator.store.close();
     const b = await makeFacilitator(s, { store: new FileStore(t.journal), relayerKey: a.relayerKey });
     expect(await b.facilitator.flush()).to.include({ submitted: 1, settled: 1 });

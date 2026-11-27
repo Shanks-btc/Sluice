@@ -6,7 +6,7 @@ import type { PaymentPayload, PaymentRequirements, SettleResponse, VerifyRespons
 
 export type StatusResponse = {
   id: string;
-  status: "queued" | "submitted" | "settled" | "skipped" | "expired" | "failed";
+  status: "held" | "queued" | "submitted" | "settled" | "skipped" | "expired" | "failed";
   transaction?: string;
   blockNumber?: number;
   reason?: string;
@@ -39,31 +39,43 @@ export type RelayRequest =
   | { kind: "revoke"; payer: string; agent: string; deadline: string; signature: string };
 export type RelayResponse = { ok: boolean; error?: string; detail?: string; transaction?: string };
 
-/** What a tool server needs from a facilitator. */
+/** What a tool server needs from a facilitator. `hold` and `capture` are for a server that answers only for a settled payment. */
 export interface FacilitatorApi {
   verify(payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse>;
   settle(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse>;
+  /** Records the payment, counted against the payer, without sending it. The answer carries the token that releases it. */
+  hold?(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse>;
+  /** Releases a held payment and waits for the chain. Success means it settled. */
+  capture?(id: string, token: string): Promise<SettleResponse>;
 }
 
-export type ClientOptions = { url: string; fetch?: typeof fetch; timeoutMs?: number };
+export type ClientOptions = {
+  url: string;
+  fetch?: typeof fetch;
+  timeoutMs?: number;
+  /** How long a capture may take: it waits for the chain. Default 30 seconds. */
+  captureTimeoutMs?: number;
+};
 
 export class FacilitatorClient implements FacilitatorApi {
   private readonly base: string;
   private readonly doFetch: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly captureTimeoutMs: number;
 
   constructor(options: ClientOptions) {
     this.base = options.url.replace(/\/+$/, "");
     // A wrapper, not the global itself: a browser throws "Illegal invocation" if fetch is called as a method of another object.
     this.doFetch = options.fetch ?? ((input, init) => fetch(input, init));
     this.timeoutMs = options.timeoutMs ?? 15_000;
+    this.captureTimeoutMs = options.captureTimeoutMs ?? 30_000;
   }
 
-  private async call<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  private async call<T>(method: "GET" | "POST", path: string, body?: unknown, timeoutMs = this.timeoutMs): Promise<T> {
     // An explicit timer, cleared as soon as the answer is in. AbortSignal.timeout leaves a pending timer behind and, on
     // Node 24 for Windows, crashed the process at exit after a test run.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     let status: number;
     let text: string;
     try {
@@ -96,6 +108,14 @@ export class FacilitatorClient implements FacilitatorApi {
 
   settle(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse> {
     return this.call("POST", "/settle", { x402Version: X402_VERSION, paymentPayload: payload, paymentRequirements: requirements });
+  }
+
+  hold(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse> {
+    return this.call("POST", "/hold", { x402Version: X402_VERSION, paymentPayload: payload, paymentRequirements: requirements });
+  }
+
+  capture(id: string, token: string): Promise<SettleResponse> {
+    return this.call("POST", "/capture", { id, token }, this.captureTimeoutMs);
   }
 
   async status(id: string): Promise<StatusResponse | undefined> {

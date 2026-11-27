@@ -102,7 +102,7 @@ export function parseStatus(json: unknown): StatusView | undefined {
   const j = json as Record<string, unknown>;
   if (typeof j.error === "string") return undefined;
   const status = text(j.status, 20);
-  if (!status || !["queued", "submitted", "settled", "skipped", "expired", "failed"].includes(status)) return undefined;
+  if (!status || !["held", "queued", "submitted", "settled", "skipped", "expired", "failed"].includes(status)) return undefined;
   return {
     id: typeof j.id === "string" && INTENT_ID.test(j.id) ? j.id : undefined,
     status,

@@ -282,11 +282,32 @@ intent with the same payer and nonce is refused with `sluice_nonce_used`. The fa
 `batchSettle`, and reads the `Settled` and `SettleSkipped` events to learn each one's outcome.
 
 **`GET /status/<id>`** returns `{ "id", "status", "transaction"?, "blockNumber"?, "reason"?, "payer", "payee", "amount" }`.
-`status` is `queued`, `settled`, `skipped` (with `reason` the contract's error name), `expired` (the deadline passed
-before submission) or `failed`. An unknown id is a 404.
+`status` is `held` (section 7.4), `queued`, `settled`, `skipped` (with `reason` the contract's error name), `expired` (the
+deadline passed before submission) or `failed`. An unknown id is a 404.
 
 **`POST /onboard`** and **`POST /relay`** are section 8. **`GET /health`** reports the relayer's address, balance, budget
 and alerts, and never a key.
+
+### 7.4 Answering only for a settled payment (optional)
+
+Queued is not paid: a facilitator that cannot send in time lets an intent expire after the tool has answered. A
+facilitator MAY offer two more endpoints, for a resource server that answers only once a payment has settled.
+
+**`POST /hold`** takes the `/settle` body and runs the same checks, counted against the same limits, and records the intent
+without queueing it: its status is `held`, nothing sends it, and it counts against the payer like a queued one. The answer
+is `/settle`'s, with `extensions.sluice.hold`: a random token, given once. An intent that is already recorded is refused
+[`sluice_intent_already_used`], and a plain `/settle` of a held intent is refused the same way. A held intent that is never
+released expires at its deadline, and the payer is not charged.
+
+**`POST /capture`** takes `{ "id", "token" }`, releases the held intent to the queue, and waits. It answers `success: true`
+with status `settled` once the chain's record shows the `Settled` event. If the intent could not be sent while it waited, the
+facilitator marks it `failed`, never sends it, and answers [`sluice_payment_not_taken`]. If it was sent and the chain has not
+yet answered, it answers [`sluice_payment_pending`]: the same id and token ask again.
+
+A resource server that uses them holds the payment before it runs the tool, runs nothing unless the answer is `held`,
+captures only after a run that succeeded, and returns the tool's content only for a capture that succeeded. For a capture
+that is pending it returns the error `sluice_payment_pending`; a client SHOULD send the same payment again, and MUST NOT
+sign a new one for that call.
 
 ## 8. Starting with no QIE, and leaving
 
@@ -351,6 +372,8 @@ keep their meaning.
 | `sluice_store_unavailable` | The facilitator could not record the intent durably (its queue store is unreadable or the disk is full), so it accepted nothing. Nothing was queued and nothing was charged. |
 | `sluice_kill_switch` | The operator has stopped the facilitator from relaying, settling and topping up. Reads still work. The client should not sign again. |
 | `sluice_rate_limited` | The facilitator's limit on requests from one address or one payer was reached. The HTTP status is 429 and `Retry-After` says how long to wait. |
+| `sluice_payment_pending` | The payment was sent for settlement and is not yet known to have settled. Send the same payment again; do not sign a new one. |
+| `sluice_payment_not_taken` | The payment could not be sent in time, was not sent, and will not be. The payer is not charged for it. |
 | `sluice_onboard_refused`, `sluice_relay_refused` | An `/onboard` or `/relay` request was refused, with a detail. |
 | `sluice_not_found` | A `/status` id is not known. The HTTP status is 404. |
 | `unexpected_verify_error`, `unexpected_settle_error` | An unexpected failure. |
@@ -378,7 +401,8 @@ A `SettleSkipped` reason is the name of a contract error: `ZeroAmount`, `Invalid
 - **The server runs the tool before it is paid.** A server verifies, runs the tool, then queues settlement. Between those
   steps the payer can refund their balance, and the intent is then skipped on chain. Facilitators reduce the window by
   counting queued intents against a payer's balance and an agent's budget. A server that cannot bear the loss for a
-  call should price it low, or settle before running it.
+  call should price it low, or settle before running it, or answer only once it has settled (section 7.4), which keeps
+  the answer back and does not keep the tool from running.
 - **The facilitator is trusted to report honestly** to a resource server, as in x402. It cannot move any balance: every
   payment is a signature, the destination of exits is signed, and only the router moves value. If it lies, the cost is to
   the resource server, which can check any intent's outcome on chain.

@@ -35,15 +35,20 @@ export type HttpFetch = (
 
 export const MAX_REPLY_CHARS = 200_000;
 export const CALL_TIMEOUT_MS = 20_000;
+/** A call that carries a payment may wait for the chain before it is answered, so it is given longer than a call that asks a price. */
+export const PAY_TIMEOUT_MS = 60_000;
+/** How often the same signed payment is sent again while the server says it is not yet known to have settled. */
+export const PAYMENT_RESENDS = 3;
+const NOT_YET = new Set(["sluice_payment_pending", "payment_in_progress"]);
 
 const defaultFetch: HttpFetch = (url, init) => fetch(url, init as RequestInit);
 
 type Posted = { status: number; requestId?: string; json: unknown };
 
 /** POSTs one JSON-RPC message to a tool server's /mcp and reads its answer as JSON, or as the first event of an event stream. */
-async function postMcp(base: string, message: unknown, fetchImpl: HttpFetch): Promise<Posted> {
+async function postMcp(base: string, message: unknown, fetchImpl: HttpFetch, timeoutMs = CALL_TIMEOUT_MS): Promise<Posted> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), CALL_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetchImpl(`${base}/mcp`, {
       method: "POST",
@@ -148,6 +153,8 @@ export type PaidCallDeps = FlowDeps & {
   /** For the explorer link in a receipt. */
   network: NetworkInfo;
   fetchImpl?: HttpFetch;
+  /** The wait before the same payment is sent again. Default 4 seconds. */
+  resendDelayMs?: number;
 };
 
 /** The price a tool server asks for a call with no payment, checked against this page's own settings before it is shown. */
@@ -359,16 +366,29 @@ export class PaidCallSession {
       payload: { signature, authorization: toWire(intent) },
     };
     this.current = "paying";
-    const posted = await postMcp(
-      deps.toolsUrl,
-      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: quote.tool, arguments: plan.args, _meta: { [PAYMENT_META_KEY]: payload } } },
-      deps.fetchImpl ?? defaultFetch,
-    );
-    const body = posted.json as { result?: Record<string, unknown>; error?: unknown } | null;
-    if (!body || typeof body !== "object" || body.error || typeof body.result !== "object" || body.result === null) {
-      throw new SluiceCallError("rpc_error", "the tool server refused the request", "tool_server");
+    const message = { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: quote.tool, arguments: plan.args, _meta: { [PAYMENT_META_KEY]: payload } } };
+    let posted: Posted;
+    let result: Record<string, unknown>;
+    for (let sent = 0; ; sent++) {
+      try {
+        posted = await postMcp(deps.toolsUrl, message, deps.fetchImpl ?? defaultFetch, PAY_TIMEOUT_MS);
+      } catch (err) {
+        // Sent before and answered "not yet": silence now says nothing about the payment.
+        if (sent > 0) throw new SluiceCallError("sluice_payment_pending", "the payment is not yet known to have settled", "tool_server");
+        // The signed payment left the page and nothing came back: it may have arrived.
+        if (err instanceof SluiceCallError && (err.code === "unreachable" || err.code === "unreadable")) throw new SluiceCallError("unconfirmed", "the tool server did not answer after the payment was signed", "tool_server");
+        throw err;
+      }
+      const body = posted.json as { result?: Record<string, unknown>; error?: unknown } | null;
+      if (!body || typeof body !== "object" || body.error || typeof body.result !== "object" || body.result === null) {
+        throw new SluiceCallError("rpc_error", "the tool server refused the request", "tool_server");
+      }
+      result = body.result;
+      // The same signed payment is sent again, never a new one: the server gives its answer once the payment has settled.
+      const code = (result.structuredContent as { error?: unknown } | undefined)?.error;
+      if (result.isError !== true || typeof code !== "string" || !NOT_YET.has(code) || sent >= PAYMENT_RESENDS) break;
+      await new Promise<void>((resolve) => setTimeout(resolve, deps.resendDelayMs ?? 4_000));
     }
-    const result = body.result;
     if (result.isError === true) {
       const sc = result.structuredContent as { error?: unknown } | undefined;
       const code = typeof sc?.error === "string" ? sc.error : "tool_error";

@@ -165,7 +165,7 @@ describe("End to end: agent -> proxy -> paid tools -> facilitator -> router", fu
     expect(settlement.extensions.sluice.status).to.equal("queued");
 
     expect(await s.facilitator.flush()).to.include({ submitted: 1, settled: 1 });
-    expect(s.facilitator.status(intentId)).to.deep.include({ status: "settled", payer: owner.address, payee: builder.address, amount: USDC("0.01").toString() });
+    expect((await s.facilitator.status(intentId))).to.deep.include({ status: "settled", payer: owner.address, payee: builder.address, amount: USDC("0.01").toString() });
     expect((await s.router.payerBalance(owner.address)) as bigint).to.equal(before - USDC("0.01"));
     expect((await s.router.earnings(builder.address)) as bigint).to.equal(USDC("0.01") - USDC("0.01") / 100n);
     expect((await s.router.earnings(s.feeRecipient.address)) as bigint).to.equal(USDC("0.01") / 100n);

@@ -78,9 +78,9 @@ describe("Facilitator operations: the kill switch", function () {
     expect(kill.active()).to.equal(true);
     const health = await f.health();
     expect(health).to.include({ ok: true, killSwitch: true });
-    expect(f.status(m.digest)?.status).to.equal("queued");
+    expect((await f.status(m.digest))?.status).to.equal("queued");
     expect((await f.flush()).held).to.equal(ERRORS.killSwitch);
-    expect(f.status(m.digest)?.status).to.equal("queued"); // not sent, not lost
+    expect((await f.status(m.digest))?.status).to.equal("queued"); // not sent, not lost
     expect(f.relayer.alerts.map((a) => a.kind)).to.include("kill_switch");
 
     // Taking the file away lets it carry on from the queue, with no restart.
@@ -631,9 +631,9 @@ describe("Facilitator: an orderly stop", function () {
 
     // The next start finds the batch in the journal and settles it from the chain.
     const next = await startFacilitator(env, { provider: s.provider, write: () => undefined });
-    expect(next.facilitator.status(m.digest)?.status).to.equal("settled");
+    expect((await next.facilitator.status(m.digest))?.status).to.equal("settled");
     expect(await s.router.earnings(builder)).to.equal(price - price / 100n);
-    expect(next.facilitator.status(late.digest)).to.equal(undefined);
+    expect((await next.facilitator.status(late.digest))).to.equal(undefined);
     await next.shutdown("done");
   });
 
